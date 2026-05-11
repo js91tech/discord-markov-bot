@@ -1,0 +1,54 @@
+import random
+import re
+
+class MarkovChain:
+    def __init__(self, order=2):
+        self.order = order
+        self.chain = {}
+
+    def learn(self, text):
+        words = re.findall(r'\S+', text.lower())
+        if len(words) < self.order:
+            return
+            
+        words = ["<START>"] * self.order + words + ["<END>"]
+        
+        for i in range(len(words) - self.order):
+            key = tuple(words[i:i+self.order])
+            next_word = words[i+self.order]
+            
+            if key not in self.chain:
+                self.chain[key] = []
+            self.chain[key].append(next_word)
+
+    def generate(self, min_words=4, max_words=40, seed=None):
+        if not self.chain:
+            return None
+
+        if seed:
+            seed_words = re.findall(r'\S+', seed.lower())
+            if len(seed_words) >= self.order:
+                current = tuple(seed_words[-self.order:])
+            else:
+                current = random.choice(list(self.chain.keys()))
+        else:
+            # Find a starting key
+            start_keys = [k for k in self.chain.keys() if k[0] == "<START>"]
+            current = random.choice(start_keys) if start_keys else random.choice(list(self.chain.keys()))
+
+        output = []
+        for _ in range(max_words):
+            if current not in self.chain:
+                break
+                
+            next_word = random.choice(self.chain[current])
+            if next_word == "<END>":
+                break
+                
+            output.append(next_word)
+            current = tuple(list(current)[1:] + [next_word])
+
+        if len(output) < min_words:
+            return None # Too short, fail silently
+            
+        return " ".join(output)
