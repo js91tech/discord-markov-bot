@@ -83,6 +83,18 @@ class SettingsCog(commands.Cog):
         await self.settings_manager.set_setting(interaction.guild.id, "brain_mode", brain.value)
         await interaction.response.send_message(f"🧠 Brain mode set to **{brain.name}**.", ephemeral=True)
 
+    @group.command(name="remember", description="Make the bot permanently remember a fact about a user")
+    @app_commands.describe(user="The user this fact is about", fact="The fact to remember")
+    async def remember(self, interaction: discord.Interaction, user: discord.Member, fact: str):
+        await self.db.add_memory(interaction.guild.id, user.id, fact)
+        await interaction.response.send_message(f"🧠 I'll remember that about {user.display_name}: {fact}", ephemeral=True)
+
+    @group.command(name="forget", description="Make the bot forget all facts about a user")
+    @app_commands.describe(user="The user to forget")
+    async def forget(self, interaction: discord.Interaction, user: discord.Member):
+        await self.db.forget_memories(interaction.guild.id, user.id)
+        await interaction.response.send_message(f"🧠 I've forgotten everything I knew about {user.display_name}.", ephemeral=True)
+
     @group.command(name="mimic", description="Generate a message mimicking a specific user")
     @app_commands.describe(user="The user you want to mimic")
     async def mimic(self, interaction: discord.Interaction, user: discord.Member):
@@ -101,7 +113,7 @@ class SettingsCog(commands.Cog):
                     messages_found += 1
                     if messages_found >= 500: break
             if messages_found < 5:
-                await interaction.followup.send(f"{user.display_name} hasn't talked enough here for me to mimic them! (Only found {messages_found} messages)", ephemeral=True)
+                await interaction.followup.send(f"{user.display_name} hasn't talked enough here for me to mimic them!", ephemeral=True)
                 return
             response = None
             for _ in range(5):
