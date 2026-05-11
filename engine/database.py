@@ -5,10 +5,12 @@ import os
 class Database:
     def __init__(self):
         self.db_path = "data/bot.db"
+        self.conn = None
 
     async def init(self):
         os.makedirs("data", exist_ok=True)
         self.conn = await aiosqlite.connect(self.db_path)
+        await self.conn.execute("PRAGMA journal_mode=WAL") # Safer DB writes
         await self.conn.execute("""CREATE TABLE IF NOT EXISTS markov (
                                     guild_id INTEGER, 
                                     key TEXT, 
