@@ -26,6 +26,11 @@ class Database:
                                     guild_id INTEGER PRIMARY KEY, 
                                     messages_learned INTEGER DEFAULT 0,
                                     messages_sent INTEGER DEFAULT 0)""")
+        # NEW: Memories table for permanent user facts
+        await self.conn.execute("""CREATE TABLE IF NOT EXISTS memories (
+                                    guild_id INTEGER, 
+                                    user_id INTEGER, 
+                                    note TEXT)""")
         await self.conn.commit()
         self._worker_task = asyncio.create_task(self._write_worker())
 
@@ -48,11 +53,9 @@ class Database:
         return chain
 
     async def save_full_chain(self, guild_id, db_dict):
-        """Wipes old chain and saves the full new chain safely using JSON string keys."""
         await self.queue.put(("DELETE FROM markov WHERE guild_id = ?", (guild_id,)))
         for json_key, values in db_dict.items():
             sql = "INSERT OR REPLACE INTO markov (guild_id, key, value) VALUES (?, ?, ?)"
-            # The key is already a JSON string from to_db_dict(), values just needs dumping
             params = (guild_id, json_key, json.dumps(values))
             await self.queue.put((sql, params))
 
@@ -80,3 +83,17 @@ class Database:
         await self.queue.put(("DELETE FROM markov WHERE guild_id = ?", (guild_id,)))
         await self.queue.put(("DELETE FROM settings WHERE guild_id = ?", (guild_id,)))
         await self.queue.put(("DELETE FROM stats WHERE guild_id = ?", (guild_id,)))
+        await self.queue.put(("DELETE FROM memories WHERE guild_id = ?", (guild_id,)))
+
+    # --- MEMORY RECALL FUNCTIONS ---
+    async def add_memory(self, guild_id, user_id, note):
+        sql = "INSERT INTO memories (guild_id, user_id, note) VALUES (?, ?, ?)"
+        await self.queue.put((sql, (guild_id, user_id, note)))
+
+    async def get_memories(self, guild_id, user_id):
+        cursor = await self.conn.execute("SELECT note FROM memories WHERE guild_id = ? AND user_id = ?", (guild_id, user_id))
+        rows = await cursor.fetchall()
+        return [row[0] for row in rows]
+
+    async def forget_memories(self, guild_id, user_id):
+        await self.queue.put(("DELETE FROM memories WHERE guild_id = ? AND user_id = ?", (guild_id, user_id)))
