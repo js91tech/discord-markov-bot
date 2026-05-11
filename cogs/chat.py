@@ -24,6 +24,36 @@ class Chat(commands.Cog):
         return self.chains[guild_id]
 
     @commands.Cog.listener()
+    async def on_guild_join(self, guild):
+        """Automatically feeds the starter brain when joining a new server."""
+        stats = await self.db.get_stats(guild.id)
+        
+        # If the bot has learned 0 messages in this server, it's brand new!
+        if stats["messages_learned"] == 0:
+            try:
+                with open("training_data.txt", "r", encoding="utf-8") as f:
+                    lines = f.readlines()
+                
+                settings = await self.settings_manager.get_settings(guild.id)
+                chain = await self.get_chain(guild.id, settings["markov_order"])
+                
+                for line in lines:
+                    clean_line = line.strip()
+                    if clean_line:
+                        chain.learn(clean_line)
+                
+                # Save the newly learned chain to the database
+                for key, values in chain.chain.items():
+                    await self.db.save_markov_key(guild.id, key, values)
+                
+                await self.db.increment_stat(guild.id, "messages_learned", len(lines))
+                print(f"Loaded starter brain for new guild: {guild.name}")
+            except FileNotFoundError:
+                print("No training_data.txt found, starting with an empty brain.")
+            except Exception as e:
+                print(f"Error loading starter brain: {e}")
+
+    @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
         if message.guild is None or message.author == self.bot.user:
             return
@@ -45,7 +75,6 @@ class Chat(commands.Cog):
         if settings["learning_enabled"] and not message.content.startswith("/"):
             chain = await self.get_chain(guild_id, settings["markov_order"])
             chain.learn(message.content)
-            # Persist to DB (batching is better for performance, but kept simple here)
             words = message.content.lower().split()
             if len(words) >= chain.order:
                 await self.db.increment_stat(guild_id, "messages_learned")
@@ -94,9 +123,8 @@ class Chat(commands.Cog):
                 seed=message.content
             )
             
-            # Fallback if generation fails (not enough data)
+            # Fallback if generation fails
             if not response:
-                # Try without seed
                 response = chain.generate(
                     min_words=settings["min_response_words"],
                     max_words=settings["max_response_words"]
