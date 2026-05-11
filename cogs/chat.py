@@ -14,12 +14,48 @@ class Chat(commands.Cog):
         self.chains = {}
         self.channel_counters = {}
         self.channel_cooldowns = {}
+        
+        # Short-term memory to prevent the bot from repeating itself or copy-pasting users
+        self.bot_recent_messages = {} 
 
     async def get_chain(self, guild_id, order):
         if guild_id not in self.chains:
             self.chains[guild_id] = MarkovChain(order=order)
             self.chains[guild_id].chain = await self.db.get_markov(guild_id)
         return self.chains[guild_id]
+
+    def _generate_unique_response(self, chain, seed, trigger_text, guild_id, min_words, max_words):
+        """Generates a response and ensures it's not a direct copy of the trigger or recent bot messages."""
+        recent_bot_msgs = self.bot_recent_messages.get(guild_id, [])
+        response = None
+        
+        for _ in range(5): # Try up to 5 times to get a unique message
+            generated = chain.generate(min_words=min_words, max_words=max_words, seed=seed)
+            if generated:
+                gen_clean = generated.lower().strip()
+                trig_clean = trigger_text.lower().strip()
+                
+                # 1. Make sure it's not a word-for-word copy of what the user just said
+                if gen_clean == trig_clean:
+                    continue
+                    
+                # 2. Make sure the bot hasn't said this exact thing in its last 10 messages
+                if gen_clean in recent_bot_msgs:
+                    continue
+                    
+                # Success! It's unique enough.
+                response = generated
+                break
+                
+        # Update the bot's short-term memory with the new message
+        if response:
+            if guild_id not in self.bot_recent_messages:
+                self.bot_recent_messages[guild_id] = []
+            self.bot_recent_messages[guild_id].append(response.lower().strip())
+            # Only keep the last 10 messages in memory to save RAM
+            self.bot_recent_messages[guild_id] = self.bot_recent_messages[guild_id][-10:]
+            
+        return response
 
     @commands.Cog.listener()
     async def on_guild_join(self, guild):
@@ -110,13 +146,12 @@ class Chat(commands.Cog):
                 try:
                     await message.add_reaction(random.choice(emoji_options))
                     self.channel_cooldowns[channel_id] = time.time()
-                    return # Stop here, we reacted instead of talking
+                    return 
                 except discord.errors.HTTPException:
-                    pass # If emoji fails, just fallback to typing
+                    pass 
 
-            # --- FAKE TYPING FEATURE (FIXED) ---
+            # --- FAKE TYPING FEATURE ---
             async with message.channel.typing():
-                # Determine reply/mention/gif logic
                 use_reply = is_reply or (random.random() < settings["random_reply_chance"])
                 use_mention = is_mentioned or (random.random() < settings["random_mention_chance"])
                 use_gif = (random.random() < settings["gif_chance"])
@@ -133,20 +168,20 @@ class Chat(commands.Cog):
                         final_content = f"{message.author.mention} " if use_mention else ""
                         final_content += gif_url
                     else:
-                        use_gif = False # Fallback to text
+                        use_gif = False
                 
                 if not use_gif:
                     chain = await self.get_chain(guild_id, settings["markov_order"])
-                    response = chain.generate(
+                    
+                    # Use the new deduplication generator
+                    response = self._generate_unique_response(
+                        chain=chain,
+                        seed=message.content,
+                        trigger_text=message.content,
+                        guild_id=guild_id,
                         min_words=settings["min_response_words"],
-                        max_words=settings["max_response_words"],
-                        seed=message.content
+                        max_words=settings["max_response_words"]
                     )
-                    if not response:
-                        response = chain.generate(
-                            min_words=settings["min_response_words"],
-                            max_words=settings["max_response_words"]
-                        )
                     
                     if response:
                         prefix = settings["personality_prefix"]
@@ -166,7 +201,12 @@ class Chat(commands.Cog):
                         if not use_gif and random.random() < settings["burst_chance"]:
                             async with message.channel.typing():
                                 chain = await self.get_chain(guild_id, settings["markov_order"])
-                                burst_response = chain.generate(
+                                # Burst message uses the generated response as the trigger text to avoid repeating it
+                                burst_response = self._generate_unique_response(
+                                    chain=chain,
+                                    seed=None,
+                                    trigger_text=final_content,
+                                    guild_id=guild_id,
                                     min_words=settings["min_response_words"],
                                     max_words=settings["max_response_words"]
                                 )
