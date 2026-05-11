@@ -16,12 +16,11 @@ class SettingsCog(commands.Cog):
 
     # --- AUTOCOMPLETE FUNCTION ---
     async def setting_autocomplete(self, interaction: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:
-        """Provides a dropdown list of all valid setting keys."""
         keys = list(DEFAULTS.keys())
         return [
             app_commands.Choice(name=key, value=key)
             for key in keys if current.lower() in key.lower()
-        ][:25] # Discord limits to 25 choices
+        ][:25]
 
     # --- /botsettings set (WITH AUTOCOMPLETE) ---
     @group.command(name="set", description="Change a setting")
@@ -37,7 +36,6 @@ class SettingsCog(commands.Cog):
             await interaction.response.send_message(f"❌ Invalid value for `{key}`. Check the type (true/false, number, etc).", ephemeral=True)
             return
 
-        # Type casting
         if isinstance(DEFAULTS[key], bool):
             parsed_val = str(value).lower() in ["true", "yes", "on"]
         elif isinstance(DEFAULTS[key], int):
@@ -107,12 +105,11 @@ class SettingsCog(commands.Cog):
     ])
     async def markov(self, interaction: discord.Interaction, level: app_commands.Choice[int]):
         await self.settings_manager.set_setting(interaction.guild.id, "markov_order", level.value)
-        # Clear the chain from memory so it reloads with the new order
         if interaction.guild.id in self.bot.get_cog("Chat").chains:
             del self.bot.get_cog("Chat").chains[interaction.guild.id]
         await interaction.response.send_message(f"🧠 Markov order set to **{level.name}**", ephemeral=True)
 
-    # --- /mimic (SLASH COMMAND) ---
+    # --- /mimic (SLASH COMMAND) - FIXED ---
     @group.command(name="mimic", description="Generate a message mimicking a specific user")
     @app_commands.describe(user="The user you want to mimic")
     async def mimic(self, interaction: discord.Interaction, user: discord.Member):
@@ -120,28 +117,34 @@ class SettingsCog(commands.Cog):
             await interaction.response.send_message("I only mimic humans! 🤖", ephemeral=True)
             return
 
-        await interaction.response.defer(thinking=True) # Show "Bot is thinking..." while we scan messages
+        await interaction.response.defer(thinking=True)
         
-        # Efficiently build a temporary brain just from the last 100 messages by this user
-        temp_chain = MarkovChain(order=2)
-        messages_found = 0
-        
-        async for msg in interaction.channel.history(limit=200):
-            if msg.author.id == user.id and not msg.content.startswith("/"):
-                temp_chain.learn(msg.content)
-                messages_found += 1
-                if messages_found >= 50: # Stop after 50 of their messages to save RAM/time
-                    break
-        
-        if messages_found < 5:
-            await interaction.followup.send(f"{user.display_name} hasn't talked enough here for me to mimic them!", ephemeral=True)
-            return
+        try:
+            temp_chain = MarkovChain(order=2)
+            messages_found = 0
+            
+            async for msg in interaction.channel.history(limit=200):
+                if msg.author.id == user.id and not msg.content.startswith("/"):
+                    temp_chain.learn(msg.content)
+                    messages_found += 1
+                    if messages_found >= 50:
+                        break
+            
+            if messages_found < 5:
+                await interaction.followup.send(f"{user.display_name} hasn't talked enough here for me to mimic them!", ephemeral=True)
+                return
 
-        response = temp_chain.generate(min_words=4, max_response_words=40)
-        if response:
-            await interaction.followup.send(f"**{user.display_name}:** {sanitize_message(response)}")
-        else:
-            await interaction.followup.send(f"I couldn't figure out how {user.display_name} talks!", ephemeral=True)
+            # FIXED TYPO: max_response_words -> max_words
+            response = temp_chain.generate(min_words=4, max_words=40)
+            
+            if response:
+                await interaction.followup.send(f"**{user.display_name}:** {sanitize_message(response)}")
+            else:
+                await interaction.followup.send(f"I couldn't figure out how {user.display_name} talks!", ephemeral=True)
+                
+        except Exception as e:
+            # Safety net so it never gets stuck on "thinking" again
+            await interaction.followup.send(f"❌ An error occurred while mimicking: {e}", ephemeral=True)
 
     # --- STANDARD COMMANDS ---
     @group.command(name="list", description="View all current settings")
