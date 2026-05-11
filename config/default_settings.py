@@ -15,10 +15,13 @@ DEFAULTS = {
     "burst_chance": 0.1,
     "learning_enabled": True,
     "response_enabled": True,
-    "random_reply_chance": 0.15,    # 15% chance to reply to a random message
-    "random_mention_chance": 0.10,  # 10% chance to @ the person it's replying to
-    "gif_chance": 0.10,             # 10% chance to attach a GIF instead of text
-    "reaction_chance": 0.08         # 8% chance to react to a message with an emoji instead of talking
+    "random_reply_chance": 0.15,
+    "random_mention_chance": 0.10,
+    "gif_chance": 0.10,
+    "reaction_chance": 0.08,
+    "brain_mode": "markov",
+    "llm_model": "meta-llama/llama-3-8b-instruct",
+    "llm_system_prompt": "HIDDEN" # This is now hardcoded in chat.py, so users can't see or change it
 }
 
 VALIDATORS = {
@@ -41,5 +44,8 @@ VALIDATORS = {
     "random_reply_chance": lambda x: 0.0 <= float(x) <= 1.0,
     "random_mention_chance": lambda x: 0.0 <= float(x) <= 1.0,
     "gif_chance": lambda x: 0.0 <= float(x) <= 1.0,
-    "reaction_chance": lambda x: 0.0 <= float(x) <= 1.0
+    "reaction_chance": lambda x: 0.0 <= float(x) <= 1.0,
+    "brain_mode": lambda x: str(x).lower() in ["markov", "llm"],
+    "llm_model": lambda x: isinstance(x, str),
+    "llm_system_prompt": lambda x: isinstance(x, str)
 }
