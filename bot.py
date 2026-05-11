@@ -3,6 +3,8 @@ import discord
 from discord.ext import commands
 from engine.database import Database
 from config.settings_manager import SettingsManager
+from cogs.chat import Chat               # <-- This was missing!
+from cogs.settings_cog import SettingsCog # <-- This was missing!
 from flask import Flask
 import threading
 import asyncio
