@@ -17,7 +17,8 @@ DEFAULTS = {
     "response_enabled": True,
     "random_reply_chance": 0.15,    # 15% chance to reply to a random message
     "random_mention_chance": 0.10,  # 10% chance to @ the person it's replying to
-    "gif_chance": 0.10              # 10% chance to attach a GIF instead of text
+    "gif_chance": 0.10,             # 10% chance to attach a GIF instead of text
+    "reaction_chance": 0.08         # 8% chance to react to a message with an emoji instead of talking
 }
 
 VALIDATORS = {
@@ -39,5 +40,6 @@ VALIDATORS = {
     "response_enabled": lambda x: str(x).lower() in ["true", "false"],
     "random_reply_chance": lambda x: 0.0 <= float(x) <= 1.0,
     "random_mention_chance": lambda x: 0.0 <= float(x) <= 1.0,
-    "gif_chance": lambda x: 0.0 <= float(x) <= 1.0
+    "gif_chance": lambda x: 0.0 <= float(x) <= 1.0,
+    "reaction_chance": lambda x: 0.0 <= float(x) <= 1.0
 }
