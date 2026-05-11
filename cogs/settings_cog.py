@@ -104,5 +104,41 @@ class SettingsCog(commands.Cog):
         await self.settings_manager.reset_all(interaction.guild.id)
         await interaction.response.send_message("💣 All learned data and settings have been wiped.", ephemeral=True)
 
+    @group.command(name="loadbrain", description="Manually load the starter brain text file")
+    async def load_brain(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        guild_id = interaction.guild.id
+        
+        try:
+            with open("training_data.txt", "r", encoding="utf-8") as f:
+                lines = f.readlines()
+        except FileNotFoundError:
+            await interaction.followup.send("❌ No `training_data.txt` file found in the bot's folder!", ephemeral=True)
+            return
+
+        settings = await self.settings_manager.get_settings(guild_id)
+        chat_cog = self.bot.get_cog("Chat")
+        
+        if not chat_cog:
+            await interaction.followup.send("❌ Chat cog not loaded.", ephemeral=True)
+            return
+
+        chain = await chat_cog.get_chain(guild_id, settings["markov_order"])
+        
+        learned_count = 0
+        for line in lines:
+            clean_line = line.strip()
+            if clean_line:
+                chain.learn(clean_line)
+                learned_count += 1
+                
+        # Save the newly learned chain back to the DB
+        for key, values in chain.chain.items():
+            await self.db.save_markov_key(guild_id, key, values)
+            
+        await self.db.increment_stat(guild_id, "messages_learned", learned_count)
+        
+        await interaction.followup.send(f"🧠 Successfully loaded starter brain! Learned {learned_count} lines of text.", ephemeral=True)
+
 async def setup(bot):
     await bot.add_cog(SettingsCog(bot, bot.db, bot.settings_manager))
