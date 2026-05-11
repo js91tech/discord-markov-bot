@@ -37,7 +37,7 @@ class SettingsCog(commands.Cog):
                 parsed_val = json.loads(value)
                 if not isinstance(parsed_val, list): raise ValueError
             except Exception:
-                await interaction.response.send_message("❌ List values must be a JSON array, e.g. `[1, 2]`", ephemeral=True)
+                await interaction.response.send_message("❌ List values must be a JSON array", ephemeral=True)
                 return
         else: parsed_val = value
         await self.settings_manager.set_setting(interaction.guild.id, key, parsed_val)
@@ -73,19 +73,6 @@ class SettingsCog(commands.Cog):
         await self.settings_manager.set_setting(interaction.guild.id, "response_chance", chance)
         await interaction.response.send_message(f"🗣️ Chattiness set to **{level.name}**. Response chance is now {chance*100}%", ephemeral=True)
 
-    @group.command(name="markov", description="Change how smart the bot's brain is")
-    @app_commands.describe(level="Select a brain level")
-    @app_commands.choices(level=[
-        app_commands.Choice(name="1 - Random (Word Salad)", value=1),
-        app_commands.Choice(name="2 - Balanced (Default)", value=2),
-        app_commands.Choice(name="3 - Coherent (Needs lots of messages)", value=3)
-    ])
-    async def markov(self, interaction: discord.Interaction, level: app_commands.Choice[int]):
-        await self.settings_manager.set_setting(interaction.guild.id, "markov_order", level.value)
-        if interaction.guild.id in self.bot.get_cog("Chat").chains:
-            del self.bot.get_cog("Chat").chains[interaction.guild.id]
-        await interaction.response.send_message(f"🧠 Markov order set to **{level.name}**", ephemeral=True)
-
     @group.command(name="mode", description="Switch between Markov (Free/Silly) and LLM (Cheap/Coherent)")
     @app_commands.describe(brain="Select the brain mode")
     @app_commands.choices(brain=[
@@ -107,14 +94,12 @@ class SettingsCog(commands.Cog):
             temp_chain = MarkovChain(order=2)
             messages_found = 0
             exact_messages = set()
-            # UPDATED: Search through 5000 messages to find up to 500 of the target user's messages
             async for msg in interaction.channel.history(limit=5000):
                 if msg.author.id == user.id and not msg.content.startswith("/") and msg.content.strip():
                     temp_chain.learn(msg.content)
                     exact_messages.add(msg.content.lower().strip())
                     messages_found += 1
                     if messages_found >= 500: break
-            
             if messages_found < 5:
                 await interaction.followup.send(f"{user.display_name} hasn't talked enough here for me to mimic them! (Only found {messages_found} messages)", ephemeral=True)
                 return
