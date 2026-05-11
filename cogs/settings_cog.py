@@ -122,26 +122,32 @@ class SettingsCog(commands.Cog):
         try:
             temp_chain = MarkovChain(order=2)
             messages_found = 0
+            exact_messages = set() # Store exact messages to prevent copy-pasting
             
-            # Search through the last 1000 messages in the channel to find up to 100 messages from the target user
             async for msg in interaction.channel.history(limit=1000):
-                # Only learn from human messages that aren't commands and aren't empty
                 if msg.author.id == user.id and not msg.content.startswith("/") and msg.content.strip():
                     temp_chain.learn(msg.content)
+                    exact_messages.add(msg.content.lower().strip()) # Save lowercase version for comparison
                     messages_found += 1
-                    if messages_found >= 100: # Collect up to 100 of their recent messages
+                    if messages_found >= 100:
                         break
             
             if messages_found < 5:
                 await interaction.followup.send(f"{user.display_name} hasn't talked enough in this channel for me to mimic them! (Only found {messages_found} messages)", ephemeral=True)
                 return
 
-            response = temp_chain.generate(min_words=4, max_words=40)
+            # Try up to 5 times to generate a unique message that isn't a direct copy-paste
+            response = None
+            for _ in range(5):
+                generated = temp_chain.generate(min_words=4, max_words=40)
+                if generated and generated.lower().strip() not in exact_messages:
+                    response = generated
+                    break
             
             if response:
                 await interaction.followup.send(f"**{user.display_name}:** {sanitize_message(response)}")
             else:
-                await interaction.followup.send(f"I couldn't figure out how {user.display_name} talks! Try again, maybe they use too many emojis/gifs.", ephemeral=True)
+                await interaction.followup.send(f"I couldn't figure out how to mix up {user.display_name}'s words creatively! Try again.", ephemeral=True)
                 
         except Exception as e:
             await interaction.followup.send(f"❌ An error occurred while mimicking: {e}", ephemeral=True)
