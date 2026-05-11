@@ -22,7 +22,7 @@ class Chat(commands.Cog):
             # Load from database using the new safe format
             raw_chain = await self.db.get_markov(guild_id)
             if raw_chain:
-                self.chains[guild_id].from_dict(raw_chain)
+                self.chains[guild_id].from_db_dict(raw_chain)
         return self.chains[guild_id]
 
     def _generate_unique_response(self, chain, seed, trigger_text, guild_id, min_words, max_words):
@@ -66,7 +66,7 @@ class Chat(commands.Cog):
                         chain.learn(clean_line)
                 
                 # Save using the new safe format
-                await self.db.save_full_chain(guild.id, chain.to_dict())
+                await self.db.save_full_chain(guild.id, chain.to_db_dict())
                 await self.db.increment_stat(guild.id, "messages_learned", len(lines))
                 print(f"Loaded starter brain for new guild: {guild.name}")
             except FileNotFoundError:
@@ -94,16 +94,17 @@ class Chat(commands.Cog):
         if is_bot and not settings["learn_from_bots"]:
             return
 
-        # 1. LEARNING (With Persistent Saving)
+        # 1. LEARNING
         if settings["learning_enabled"] and not message.content.startswith("/"):
             chain = await self.get_chain(guild_id, settings["markov_order"])
             chain.learn(message.content)
             words = message.content.lower().split()
             if len(words) >= chain.order:
+                stats = await self.db.get_stats(guild_id)
                 await self.db.increment_stat(guild_id, "messages_learned")
-                # Save the whole chain back to DB every 20 messages so reboots don't lose data
-                if stats_result["messages_learned"] % 20 == 0:
-                    await self.db.save_full_chain(guild_id, chain.to_dict())
+                # Save the whole chain back to DB every 20 messages so reboots don't lose context
+                if stats["messages_learned"] % 20 == 0:
+                    await self.db.save_full_chain(guild_id, chain.to_db_dict())
 
         if is_bot or message.content.startswith("/"):
             return
