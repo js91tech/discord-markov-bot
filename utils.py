@@ -1,6 +1,5 @@
 import aiohttp
 import re
-from bs4 import BeautifulSoup
 
 async def search_gif(query):
     """Searches Tenor directly for a random GIF without needing an API key."""
@@ -15,7 +14,6 @@ async def search_gif(query):
                 if resp.status == 200:
                     text = await resp.text()
                     # Use regex to find all Tenor GIF URLs in the page source
-                    # Tenor stores direct media links in the HTML as https://media.tenor.com/...
                     gif_urls = re.findall(r'https://media\.tenor\.com/[^"\s]+\.gif', text)
                     if gif_urls:
                         import random
