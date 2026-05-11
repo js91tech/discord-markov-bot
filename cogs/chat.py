@@ -24,7 +24,8 @@ class Chat(commands.Cog):
         self.chains = {}
         self.channel_counters = {}
         self.channel_cooldowns = {}
-        self.bot_recent_messages = {} 
+        self.bot_recent_messages = {}
+        self.last_bot_message_time = {} # NEW: Tracks when the bot last spoke in a channel
 
     async def get_chain(self, guild_id, order):
         if guild_id not in self.chains:
@@ -107,11 +108,28 @@ class Chat(commands.Cog):
         is_reply_to_bot = (message.reference and message.reference.resolved and 
                            message.reference.resolved.author == self.bot.user)
 
+        # 1. Direct triggers (@mention or Discord Reply)
         if is_mentioned and settings["trigger_on_mention"]: 
             should_respond = True
         elif is_reply_to_bot and settings["trigger_on_reply"]: 
             should_respond = True
-        elif random.random() < settings["response_chance"]:
+            
+        # 2. INDIRECT REPLY TRIGGER (The Engagement Window)
+        elif not should_respond:
+            window_seconds = settings.get("conversation_window_seconds", 120)
+            indirect_chance = settings.get("indirect_reply_chance", 0.40)
+            
+            # Check if the bot spoke in this channel recently
+            last_spoke_time = self.last_bot_message_time.get(channel_id, 0)
+            time_since_bot_spoke = time.time() - last_spoke_time
+            
+            if time_since_bot_spoke < window_seconds:
+                # The bot is "engaged" in this channel right now!
+                if random.random() < indirect_chance:
+                    should_respond = True
+                    
+        # 3. Normal Random Chime-in
+        if not should_respond and random.random() < settings["response_chance"]:
             if channel_id in self.channel_cooldowns:
                 if time.time() - self.channel_cooldowns[channel_id] < settings["cooldown_seconds"]: should_respond = False
                 elif self.channel_counters[channel_id] < settings["min_messages_before_respond"]: should_respond = False
@@ -128,11 +146,8 @@ class Chat(commands.Cog):
                 except discord.errors.HTTPException: pass 
 
             async with message.channel.typing():
-                # Use Discord Reply if the user @'d us, replied to us, or randomly based on settings
                 use_reply = is_mentioned or is_reply_to_bot or (random.random() < settings["random_reply_chance"])
-                # Only put an @ in the text if it's a random occurrence based on settings
                 use_mention = (random.random() < settings["random_mention_chance"])
-                
                 use_gif = (random.random() < settings["gif_chance"])
                 final_content = None
                 reference = message if use_reply else None
@@ -159,7 +174,6 @@ class Chat(commands.Cog):
                     
                     llm_response = await generate_llm_response(SECRET_LLM_PROMPT, chat_history)
                     if llm_response:
-                        # AGGRESSIVE SCRUB: Ensure no names/pings are in the text
                         llm_response = re.sub(r'^.{0,30}?:\s*', '', llm_response).strip() 
                         llm_response = re.sub(r'<@!?\d+>', '', llm_response).strip()
                         
@@ -199,6 +213,10 @@ class Chat(commands.Cog):
                         self.channel_cooldowns[channel_id] = time.time()
                         self.channel_counters[channel_id] = 0
                         await self.db.increment_stat(guild_id, "messages_sent")
+                        
+                        # NEW: Record that the bot just spoke in this channel!
+                        self.last_bot_message_time[channel_id] = time.time()
+                        
                     except discord.errors.HTTPException as e:
                         print(f"Error sending message: {e}")
 
