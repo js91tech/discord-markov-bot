@@ -25,14 +25,19 @@ class MarkovChain:
         if not self.chain:
             return None
 
+        current = None
+        
+        # Try to use seed if provided
         if seed:
             seed_words = re.findall(r'\S+', seed.lower())
-            if len(seed_words) >= self.order:
-                current = tuple(seed_words[-self.order:])
-            else:
-                current = random.choice(list(self.chain.keys()))
-        else:
-            # Find a starting key
+            for i in range(len(seed_words) - self.order + 1):
+                test_key = tuple(seed_words[i:i+self.order])
+                if test_key in self.chain:
+                    current = test_key
+                    break
+
+        # If no seed or seed failed, pick a random start key
+        if not current:
             start_keys = [k for k in self.chain.keys() if k[0] == "<START>"]
             current = random.choice(start_keys) if start_keys else random.choice(list(self.chain.keys()))
 
@@ -49,6 +54,6 @@ class MarkovChain:
             current = tuple(list(current)[1:] + [next_word])
 
         if len(output) < min_words:
-            return None # Too short, fail silently
+            return None
             
         return " ".join(output)
