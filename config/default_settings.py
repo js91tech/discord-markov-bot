@@ -14,7 +14,10 @@ DEFAULTS = {
     "ignored_users": [],
     "burst_chance": 0.1,
     "learning_enabled": True,
-    "response_enabled": True
+    "response_enabled": True,
+    "random_reply_chance": 0.15,    # 15% chance to reply to a random message
+    "random_mention_chance": 0.10,  # 10% chance to @ the person it's replying to
+    "gif_chance": 0.10              # 10% chance to attach a GIF instead of text
 }
 
 VALIDATORS = {
@@ -28,10 +31,13 @@ VALIDATORS = {
     "trigger_on_mention": lambda x: str(x).lower() in ["true", "false"],
     "trigger_on_reply": lambda x: str(x).lower() in ["true", "false"],
     "personality_prefix": lambda x: isinstance(x, str),
-    "ignored_channels": lambda x: True, # List parsing handled in command
+    "ignored_channels": lambda x: True,
     "allowed_channels": lambda x: True,
     "ignored_users": lambda x: True,
     "burst_chance": lambda x: 0.0 <= float(x) <= 1.0,
     "learning_enabled": lambda x: str(x).lower() in ["true", "false"],
     "response_enabled": lambda x: str(x).lower() in ["true", "false"],
+    "random_reply_chance": lambda x: 0.0 <= float(x) <= 1.0,
+    "random_mention_chance": lambda x: 0.0 <= float(x) <= 1.0,
+    "gif_chance": lambda x: 0.0 <= float(x) <= 1.0
 }
