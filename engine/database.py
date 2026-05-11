@@ -47,17 +47,13 @@ class Database:
             chain[key] = json.loads(value)
         return chain
 
-    async def save_markov_key(self, guild_id, key, values):
-        sql = "INSERT OR REPLACE INTO markov (guild_id, key, value) VALUES (?, ?, ?)"
-        params = (guild_id, key, json.dumps(values))
-        await self.queue.put((sql, params))
-
-    async def save_full_chain(self, guild_id, chain_dict):
-        """Wipes old chain and saves the full new chain safely to prevent reboot data loss."""
+    async def save_full_chain(self, guild_id, db_dict):
+        """Wipes old chain and saves the full new chain safely using JSON string keys."""
         await self.queue.put(("DELETE FROM markov WHERE guild_id = ?", (guild_id,)))
-        for key, values in chain_dict.items():
+        for json_key, values in db_dict.items():
             sql = "INSERT OR REPLACE INTO markov (guild_id, key, value) VALUES (?, ?, ?)"
-            params = (guild_id, key, json.dumps(values))
+            # The key is already a JSON string from to_db_dict(), values just needs dumping
+            params = (guild_id, json_key, json.dumps(values))
             await self.queue.put((sql, params))
 
     async def get_settings(self, guild_id):
