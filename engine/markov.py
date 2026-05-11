@@ -1,5 +1,6 @@
 import random
 import re
+import json
 
 class MarkovChain:
     def __init__(self, order=2):
@@ -27,7 +28,6 @@ class MarkovChain:
 
         current = None
         
-        # Try to use seed if provided
         if seed:
             seed_words = re.findall(r'\S+', seed.lower())
             for i in range(len(seed_words) - self.order + 1):
@@ -36,7 +36,6 @@ class MarkovChain:
                     current = test_key
                     break
 
-        # If no seed or seed failed, pick a random start key
         if not current:
             start_keys = [k for k in self.chain.keys() if k[0] == "<START>"]
             current = random.choice(start_keys) if start_keys else random.choice(list(self.chain.keys()))
@@ -58,16 +57,21 @@ class MarkovChain:
             
         return " ".join(output)
 
-    def to_dict(self):
-        """Converts the chain into a format safe for JSON/database storage."""
-        return {str(key): value for key, value in self.chain.items()}
+    def to_db_dict(self):
+        """Safely converts the chain into a dictionary of JSON strings for SQLite."""
+        db_dict = {}
+        for key_tuple, values in self.chain.items():
+            # Convert the tuple ('word1', 'word2') into a JSON string '["word1", "word2"]'
+            json_key = json.dumps(list(key_tuple))
+            db_dict[json_key] = values
+        return db_dict
 
-    def from_dict(self, data):
-        """Loads the chain from the database format back into memory properly."""
+    def from_db_dict(self, db_dict):
+        """Safely loads the chain from the database JSON strings back into tuples."""
         self.chain = {}
-        for key_str, value in data.items():
-            # Safely convert the string "(word1, word2)" back into a tuple
-            clean_key = key_str.strip("()").replace("'", "").replace('"', '')
-            key_tuple = tuple(k.strip() for k in clean_key.split(","))
+        for json_key, values in db_dict.items():
+            # Convert '["word1", "word2"]' back into a Python tuple ('word1', 'word2')
+            key_list = json.loads(json_key)
+            key_tuple = tuple(key_list)
             if len(key_tuple) == self.order:
-                self.chain[key_tuple] = value
+                self.chain[key_tuple] = values
