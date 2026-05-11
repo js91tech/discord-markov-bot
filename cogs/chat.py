@@ -52,9 +52,12 @@ class Chat(commands.Cog):
         channel_id = message.channel.id
         settings = await self.settings_manager.get_settings(guild_id)
 
-        if channel_id in settings["ignored_channels"]: return
-        if settings["allowed_channels"] and channel_id not in settings["allowed_channels"]: return
-        if message.author.id in settings["ignored_users"]: return
+        if channel_id in settings["ignored_channels"]: 
+            return
+        if settings["allowed_channels"] and channel_id not in settings["allowed_channels"]: 
+            return
+        if message.author.id in settings["ignored_users"]: 
+            return
         
         is_bot = message.author.bot
         if is_bot and not settings["learn_from_bots"]:
@@ -111,7 +114,7 @@ class Chat(commands.Cog):
                 except discord.errors.HTTPException:
                     pass # If emoji fails, just fallback to typing
 
-            # --- FAKE TYPING FEATURE ---
+            # --- FAKE TYPING FEATURE (FIXED) ---
             async with message.channel.typing():
                 # Determine reply/mention/gif logic
                 use_reply = is_reply or (random.random() < settings["random_reply_chance"])
@@ -172,37 +175,6 @@ class Chat(commands.Cog):
                                     await message.channel.send(burst_text)
                     except discord.errors.HTTPException as e:
                         print(f"Error sending message: {e}")
-
-    # --- MIMIC COMMAND ---
-    @commands.command(name="mimic")
-    async def mimic(self, ctx, user: discord.Member):
-        """Generates a message mimicking a specific user's recent messages."""
-        if user.bot:
-            await ctx.send("I only mimic humans! 🤖")
-            return
-
-        await ctx.channel.trigger_typing()
-        
-        # Efficiently build a temporary brain just from the last 100 messages by this user
-        temp_chain = MarkovChain(order=2)
-        messages_found = 0
-        
-        async for msg in ctx.channel.history(limit=200):
-            if msg.author.id == user.id and not msg.content.startswith("/"):
-                temp_chain.learn(msg.content)
-                messages_found += 1
-                if messages_found >= 50: # Stop after 50 of their messages to save RAM/time
-                    break
-        
-        if messages_found < 5:
-            await ctx.send(f"{user.display_name} hasn't talked enough here for me to mimic them!")
-            return
-
-        response = temp_chain.generate(min_words=4, max_words=40)
-        if response:
-            await ctx.send(f"**{user.display_name}:** {sanitize_message(response)}")
-        else:
-            await ctx.send(f"I couldn't figure out how {user.display_name} talks!")
 
 async def setup(bot):
     await bot.add_cog(Chat(bot, bot.db, bot.settings_manager))
