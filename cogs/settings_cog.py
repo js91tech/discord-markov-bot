@@ -1,207 +1,180 @@
 import discord
 from discord.ext import commands
-from discord import app_commands
-from config.default_settings import DEFAULTS, VALIDATORS
+import random
+import time
 from engine.markov import MarkovChain
-from utils import sanitize_message
-import json
+from utils import sanitize_message, search_gif
 
-class SettingsCog(commands.Cog):
+class Chat(commands.Cog):
     def __init__(self, bot, db, settings_manager):
         self.bot = bot
         self.db = db
         self.settings_manager = settings_manager
+        
+        self.chains = {}
+        self.channel_counters = {}
+        self.channel_cooldowns = {}
 
-    group = app_commands.Group(name="botsettings", description="Configure the bot", default_permissions=discord.Permissions(manage_guild=True))
+    async def get_chain(self, guild_id, order):
+        if guild_id not in self.chains:
+            self.chains[guild_id] = MarkovChain(order=order)
+            self.chains[guild_id].chain = await self.db.get_markov(guild_id)
+        return self.chains[guild_id]
 
-    # --- AUTOCOMPLETE FUNCTION ---
-    async def setting_autocomplete(self, interaction: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:
-        keys = list(DEFAULTS.keys())
-        return [
-            app_commands.Choice(name=key, value=key)
-            for key in keys if current.lower() in key.lower()
-        ][:25]
-
-    # --- /botsettings set (WITH AUTOCOMPLETE) ---
-    @group.command(name="set", description="Change a setting")
-    @app_commands.autocomplete(key=setting_autocomplete)
-    async def set_setting(self, interaction: discord.Interaction, key: str, value: str):
-        key = key.lower()
-        if key not in DEFAULTS:
-            await interaction.response.send_message(f"❌ Invalid setting key: `{key}`", ephemeral=True)
-            return
-
-        validator = VALIDATORS.get(key)
-        if validator and not validator(value):
-            await interaction.response.send_message(f"❌ Invalid value for `{key}`. Check the type (true/false, number, etc).", ephemeral=True)
-            return
-
-        if isinstance(DEFAULTS[key], bool):
-            parsed_val = str(value).lower() in ["true", "yes", "on"]
-        elif isinstance(DEFAULTS[key], int):
-            parsed_val = int(value)
-        elif isinstance(DEFAULTS[key], float):
-            parsed_val = float(value)
-        elif isinstance(DEFAULTS[key], list):
+    @commands.Cog.listener()
+    async def on_guild_join(self, guild):
+        stats = await self.db.get_stats(guild.id)
+        if stats["messages_learned"] == 0:
             try:
-                parsed_val = json.loads(value)
-                if not isinstance(parsed_val, list): 
-                    raise ValueError
-            except Exception:
-                await interaction.response.send_message("❌ List values must be a JSON array, e.g. `[1, 2]`", ephemeral=True)
-                return
-        else:
-            parsed_val = value
+                with open("training_data.txt", "r", encoding="utf-8") as f:
+                    lines = f.readlines()
+                settings = await self.settings_manager.get_settings(guild.id)
+                chain = await self.get_chain(guild.id, settings["markov_order"])
+                for line in lines:
+                    clean_line = line.strip()
+                    if clean_line:
+                        chain.learn(clean_line)
+                for key, values in chain.chain.items():
+                    await self.db.save_markov_key(guild.id, key, values)
+                await self.db.increment_stat(guild.id, "messages_learned", len(lines))
+                print(f"Loaded starter brain for new guild: {guild.name}")
+            except FileNotFoundError:
+                pass
+            except Exception as e:
+                print(f"Error loading starter brain: {e}")
 
-        await self.settings_manager.set_setting(interaction.guild.id, key, parsed_val)
-        await interaction.response.send_message(f"✅ Set `{key}` to `{parsed_val}`", ephemeral=True)
-
-    # --- /botsettings toggle (EASY TRUE/FALSE) ---
-    @group.command(name="toggle", description="Toggle a True/False setting on or off")
-    @app_commands.describe(setting="Choose the setting to toggle")
-    @app_commands.choices(setting=[
-        app_commands.Choice(name="Response Enabled", value="response_enabled"),
-        app_commands.Choice(name="Learning Enabled", value="learning_enabled"),
-        app_commands.Choice(name="Learn From Bots", value="learn_from_bots"),
-        app_commands.Choice(name="Trigger on Mention", value="trigger_on_mention"),
-        app_commands.Choice(name="Trigger on Reply", value="trigger_on_reply")
-    ])
-    async def toggle_setting(self, interaction: discord.Interaction, setting: app_commands.Choice[str]):
-        settings = await self.settings_manager.get_settings(interaction.guild.id)
-        current_val = settings[setting.value]
-        new_val = not current_val
-        
-        await self.settings_manager.set_setting(interaction.guild.id, setting.value, new_val)
-        status = "ON ✅" if new_val else "OFF ❌"
-        await interaction.response.send_message(f"**{setting.name}** is now {status}", ephemeral=True)
-
-    # --- /botsettings chattiness (SLIDER CHOICES) ---
-    @group.command(name="chattiness", description="Quick adjust how chatty the bot is")
-    @app_commands.describe(level="Select a chattiness level")
-    @app_commands.choices(level=[
-        app_commands.Choice(name="1 - Almost Never Speaks", value=1),
-        app_commands.Choice(name="2", value=2),
-        app_commands.Choice(name="3 - Occasional", value=3),
-        app_commands.Choice(name="4", value=4),
-        app_commands.Choice(name="5 - Average", value=5),
-        app_commands.Choice(name="6", value=6),
-        app_commands.Choice(name="7 - Fairly Chatty", value=7),
-        app_commands.Choice(name="8", value=8),
-        app_commands.Choice(name="9", value=9),
-        app_commands.Choice(name="10 - Won't Shut Up", value=10)
-    ])
-    async def chattiness(self, interaction: discord.Interaction, level: app_commands.Choice[int]):
-        chance = round(level.value * 0.03, 2)
-        await self.settings_manager.set_setting(interaction.guild.id, "response_chance", chance)
-        await interaction.response.send_message(f"🗣️ Chattiness set to **{level.name}**. Response chance is now {chance*100}%", ephemeral=True)
-
-    # --- /botsettings markov (CHOICES) ---
-    @group.command(name="markov", description="Change how smart the bot's brain is")
-    @app_commands.describe(level="Select a brain level")
-    @app_commands.choices(level=[
-        app_commands.Choice(name="1 - Random (Word Salad)", value=1),
-        app_commands.Choice(name="2 - Balanced (Default)", value=2),
-        app_commands.Choice(name="3 - Coherent (Needs lots of messages)", value=3)
-    ])
-    async def markov(self, interaction: discord.Interaction, level: app_commands.Choice[int]):
-        await self.settings_manager.set_setting(interaction.guild.id, "markov_order", level.value)
-        if interaction.guild.id in self.bot.get_cog("Chat").chains:
-            del self.bot.get_cog("Chat").chains[interaction.guild.id]
-        await interaction.response.send_message(f"🧠 Markov order set to **{level.name}**", ephemeral=True)
-
-    # --- /mimic (SLASH COMMAND) - FIXED ---
-    @group.command(name="mimic", description="Generate a message mimicking a specific user")
-    @app_commands.describe(user="The user you want to mimic")
-    async def mimic(self, interaction: discord.Interaction, user: discord.Member):
-        if user.bot:
-            await interaction.response.send_message("I only mimic humans! 🤖", ephemeral=True)
+    @commands.Cog.listener()
+    async def on_message(self, message: discord.Message):
+        if message.guild is None or message.author == self.bot.user:
             return
 
-        await interaction.response.defer(thinking=True)
-        
-        try:
-            temp_chain = MarkovChain(order=2)
-            messages_found = 0
-            
-            async for msg in interaction.channel.history(limit=200):
-                if msg.author.id == user.id and not msg.content.startswith("/"):
-                    temp_chain.learn(msg.content)
-                    messages_found += 1
-                    if messages_found >= 50:
-                        break
-            
-            if messages_found < 5:
-                await interaction.followup.send(f"{user.display_name} hasn't talked enough here for me to mimic them!", ephemeral=True)
-                return
-
-            # FIXED TYPO: max_response_words -> max_words
-            response = temp_chain.generate(min_words=4, max_words=40)
-            
-            if response:
-                await interaction.followup.send(f"**{user.display_name}:** {sanitize_message(response)}")
-            else:
-                await interaction.followup.send(f"I couldn't figure out how {user.display_name} talks!", ephemeral=True)
-                
-        except Exception as e:
-            # Safety net so it never gets stuck on "thinking" again
-            await interaction.followup.send(f"❌ An error occurred while mimicking: {e}", ephemeral=True)
-
-    # --- STANDARD COMMANDS ---
-    @group.command(name="list", description="View all current settings")
-    async def list_settings(self, interaction: discord.Interaction):
-        settings = await self.settings_manager.get_settings(interaction.guild.id)
-        embed = discord.Embed(title="Bot Settings", color=discord.Color.blue())
-        for key, value in settings.items():
-            embed.add_field(name=key, value=f"`{value}`", inline=True)
-        await interaction.response.send_message(embed=embed, ephemeral=True)
-
-    @group.command(name="stats", description="View learning statistics")
-    async def stats(self, interaction: discord.Interaction):
-        stats = await self.db.get_stats(interaction.guild.id)
-        embed = discord.Embed(title="Learning Stats", color=discord.Color.green())
-        embed.add_field(name="Messages Learned", value=str(stats["messages_learned"]), inline=True)
-        embed.add_field(name="Messages Sent", value=str(stats["messages_sent"]), inline=True)
-        await interaction.response.send_message(embed=embed, ephemeral=True)
-
-    @group.command(name="resetdata", description="Delete ALL learned data for this server")
-    async def reset_data(self, interaction: discord.Interaction):
-        await self.db.delete_guild_data(interaction.guild.id)
-        if interaction.guild.id in self.bot.get_cog("Chat").chains:
-            del self.bot.get_cog("Chat").chains[interaction.guild.id]
-        await self.settings_manager.reset_all(interaction.guild.id)
-        await interaction.response.send_message("💣 All learned data and settings have been wiped.", ephemeral=True)
-
-    @group.command(name="loadbrain", description="Manually load the starter brain text file")
-    async def load_brain(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True, thinking=True)
-        guild_id = interaction.guild.id
-        
-        try:
-            with open("training_data.txt", "r", encoding="utf-8") as f:
-                lines = f.readlines()
-        except FileNotFoundError:
-            await interaction.followup.send("❌ No `training_data.txt` file found!", ephemeral=True)
-            return
-
+        guild_id = message.guild.id
+        channel_id = message.channel.id
         settings = await self.settings_manager.get_settings(guild_id)
-        chat_cog = self.bot.get_cog("Chat")
-        if not chat_cog:
-            await interaction.followup.send("❌ Chat cog not loaded.", ephemeral=True)
+
+        if channel_id in settings["ignored_channels"]: 
+            return
+        if settings["allowed_channels"] and channel_id not in settings["allowed_channels"]: 
+            return
+        if message.author.id in settings["ignored_users"]: 
+            return
+        
+        is_bot = message.author.bot
+        if is_bot and not settings["learn_from_bots"]:
             return
 
-        chain = await chat_cog.get_chain(guild_id, settings["markov_order"])
-        learned_count = 0
-        for line in lines:
-            clean_line = line.strip()
-            if clean_line:
-                chain.learn(clean_line)
-                learned_count += 1
+        # 1. LEARNING
+        if settings["learning_enabled"] and not message.content.startswith("/"):
+            chain = await self.get_chain(guild_id, settings["markov_order"])
+            chain.learn(message.content)
+            words = message.content.lower().split()
+            if len(words) >= chain.order:
+                await self.db.increment_stat(guild_id, "messages_learned")
+
+        if is_bot or message.content.startswith("/"):
+            return
+
+        if not settings["response_enabled"]:
+            return
+
+        if channel_id not in self.channel_counters:
+            self.channel_counters[channel_id] = 0
+        self.channel_counters[channel_id] += 1
+
+        # 2. TRIGGER LOGIC
+        should_respond = False
+        is_mentioned = self.bot.user.mentioned_in(message)
+        is_reply = (message.reference and message.reference.resolved and 
+                    message.reference.resolved.author == self.bot.user)
+
+        if is_mentioned and settings["trigger_on_mention"]:
+            should_respond = True
+        elif is_reply and settings["trigger_on_reply"]:
+            should_respond = True
+        elif random.random() < settings["response_chance"]:
+            if channel_id in self.channel_cooldowns:
+                if time.time() - self.channel_cooldowns[channel_id] < settings["cooldown_seconds"]:
+                    should_respond = False
+                elif self.channel_counters[channel_id] < settings["min_messages_before_respond"]:
+                    should_respond = False
+                else:
+                    should_respond = True
+            else:
+                should_respond = True
+
+        # 3. RESPONSE GENERATION
+        if should_respond:
+            # --- EMOJI REACTION FEATURE ---
+            if random.random() < settings["reaction_chance"]:
+                emoji_options = ['💀', '😭', '🔥', '💯', '🤣', '🙄', '👀', '🫡', '🤨']
+                try:
+                    await message.add_reaction(random.choice(emoji_options))
+                    self.channel_cooldowns[channel_id] = time.time()
+                    return # Stop here, we reacted instead of talking
+                except discord.errors.HTTPException:
+                    pass # If emoji fails, just fallback to typing
+
+            # --- FAKE TYPING FEATURE (FIXED) ---
+            async with message.channel.typing():
+                # Determine reply/mention/gif logic
+                use_reply = is_reply or (random.random() < settings["random_reply_chance"])
+                use_mention = is_mentioned or (random.random() < settings["random_mention_chance"])
+                use_gif = (random.random() < settings["gif_chance"])
+
+                final_content = None
+                reference = message if use_reply else None
+
+                if use_gif:
+                    search_words = [w for w in message.content.lower().split() if len(w) > 3]
+                    search_query = random.choice(search_words) if search_words else "meme"
+                    gif_url = await search_gif(search_query)
+                    
+                    if gif_url:
+                        final_content = f"{message.author.mention} " if use_mention else ""
+                        final_content += gif_url
+                    else:
+                        use_gif = False # Fallback to text
                 
-        for key, values in chain.chain.items():
-            await self.db.save_markov_key(guild_id, key, values)
-            
-        await self.db.increment_stat(guild_id, "messages_learned", learned_count)
-        await interaction.followup.send(f"🧠 Successfully loaded starter brain! Learned {learned_count} lines.", ephemeral=True)
+                if not use_gif:
+                    chain = await self.get_chain(guild_id, settings["markov_order"])
+                    response = chain.generate(
+                        min_words=settings["min_response_words"],
+                        max_words=settings["max_response_words"],
+                        seed=message.content
+                    )
+                    if not response:
+                        response = chain.generate(
+                            min_words=settings["min_response_words"],
+                            max_words=settings["max_response_words"]
+                        )
+                    
+                    if response:
+                        prefix = settings["personality_prefix"]
+                        base_text = f"{prefix} {response}".strip()
+                        base_text = sanitize_message(base_text)
+                        final_content = f"{message.author.mention} {base_text}" if use_mention else base_text
+
+                # Send the message
+                if final_content:
+                    try:
+                        await message.channel.send(final_content, reference=reference)
+                        self.channel_cooldowns[channel_id] = time.time()
+                        self.channel_counters[channel_id] = 0
+                        await self.db.increment_stat(guild_id, "messages_sent")
+                        
+                        # BURST MODE
+                        if not use_gif and random.random() < settings["burst_chance"]:
+                            async with message.channel.typing():
+                                chain = await self.get_chain(guild_id, settings["markov_order"])
+                                burst_response = chain.generate(
+                                    min_words=settings["min_response_words"],
+                                    max_words=settings["max_response_words"]
+                                )
+                                if burst_response:
+                                    burst_text = sanitize_message(f"{settings['personality_prefix']} {burst_response}".strip())
+                                    await message.channel.send(burst_text)
+                    except discord.errors.HTTPException as e:
+                        print(f"Error sending message: {e}")
 
 async def setup(bot):
-    await bot.add_cog(SettingsCog(bot, bot.db, bot.settings_manager))
+    await bot.add_cog(Chat(bot, bot.db, bot.settings_manager))
