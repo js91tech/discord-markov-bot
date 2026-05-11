@@ -57,3 +57,17 @@ class MarkovChain:
             return None
             
         return " ".join(output)
+
+    def to_dict(self):
+        """Converts the chain into a format safe for JSON/database storage."""
+        return {str(key): value for key, value in self.chain.items()}
+
+    def from_dict(self, data):
+        """Loads the chain from the database format back into memory properly."""
+        self.chain = {}
+        for key_str, value in data.items():
+            # Safely convert the string "(word1, word2)" back into a tuple
+            clean_key = key_str.strip("()").replace("'", "").replace('"', '')
+            key_tuple = tuple(k.strip() for k in clean_key.split(","))
+            if len(key_tuple) == self.order:
+                self.chain[key_tuple] = value
