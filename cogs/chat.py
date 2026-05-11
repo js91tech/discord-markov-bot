@@ -101,13 +101,16 @@ class Chat(commands.Cog):
         if channel_id not in self.channel_counters: self.channel_counters[channel_id] = 0
         self.channel_counters[channel_id] += 1
 
+        # --- TRIGGER LOGIC ---
         should_respond = False
         is_mentioned = self.bot.user.mentioned_in(message)
-        is_reply = (message.reference and message.reference.resolved and 
-                    message.reference.resolved.author == self.bot.user)
+        is_reply_to_bot = (message.reference and message.reference.resolved and 
+                           message.reference.resolved.author == self.bot.user)
 
-        if is_mentioned and settings["trigger_on_mention"]: should_respond = True
-        elif is_reply and settings["trigger_on_reply"]: should_respond = True
+        if is_mentioned and settings["trigger_on_mention"]: 
+            should_respond = True
+        elif is_reply_to_bot and settings["trigger_on_reply"]: 
+            should_respond = True
         elif random.random() < settings["response_chance"]:
             if channel_id in self.channel_cooldowns:
                 if time.time() - self.channel_cooldowns[channel_id] < settings["cooldown_seconds"]: should_respond = False
@@ -125,8 +128,11 @@ class Chat(commands.Cog):
                 except discord.errors.HTTPException: pass 
 
             async with message.channel.typing():
-                use_reply = is_reply or (random.random() < settings["random_reply_chance"])
-                use_mention = is_mentioned or (random.random() < settings["random_mention_chance"])
+                # Use Discord Reply if the user @'d us, replied to us, or randomly based on settings
+                use_reply = is_mentioned or is_reply_to_bot or (random.random() < settings["random_reply_chance"])
+                # Only put an @ in the text if it's a random occurrence based on settings
+                use_mention = (random.random() < settings["random_mention_chance"])
+                
                 use_gif = (random.random() < settings["gif_chance"])
                 final_content = None
                 reference = message if use_reply else None
@@ -137,7 +143,6 @@ class Chat(commands.Cog):
                     async for msg in message.channel.history(limit=500):
                         if msg.content.startswith("/"): continue
                         
-                        # SCRUB THE MESSAGE: Remove all <@...> and <#...> codes so the AI doesn't copy them!
                         clean_msg_content = re.sub(r'<@!?\d+>', '', msg.content).strip()
                         clean_msg_content = re.sub(r'<#\d+>', '', clean_msg_content).strip()
                         
@@ -146,7 +151,6 @@ class Chat(commands.Cog):
                             content = clean_msg_content 
                         else:
                             role = "user"
-                            # FIX: Removed the brackets! Just Name: message
                             content = f"{msg.author.display_name}: {clean_msg_content}"
                             
                         chat_history.insert(0, {"role": role, "content": content})
@@ -155,9 +159,9 @@ class Chat(commands.Cog):
                     
                     llm_response = await generate_llm_response(SECRET_LLM_PROMPT, chat_history)
                     if llm_response:
-                        # AGGRESSIVE SAFETY SCRUB: Strip any "Name:" or "@Name" the AI tries to start the sentence with
-                        llm_response = re.sub(r'^.{0,30}?:\s*', '', llm_response).strip() # Strips "Name: " at the start
-                        llm_response = re.sub(r'<@!?\d+>', '', llm_response).strip() # Strips raw pings
+                        # AGGRESSIVE SCRUB: Ensure no names/pings are in the text
+                        llm_response = re.sub(r'^.{0,30}?:\s*', '', llm_response).strip() 
+                        llm_response = re.sub(r'<@!?\d+>', '', llm_response).strip()
                         
                         base_text = sanitize_message(llm_response)
                         final_content = f"{message.author.mention} {base_text}" if use_mention else base_text
