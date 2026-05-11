@@ -2,6 +2,7 @@ import discord
 from discord.ext import commands
 import random
 import time
+import re # Added for scrubbing @mentions
 from engine.markov import MarkovChain
 from utils import sanitize_message, search_gif
 from llm import generate_llm_response
@@ -10,8 +11,8 @@ from llm import generate_llm_response
 SECRET_LLM_PROMPT = (
     "You are a real human hanging out in a Discord server. You are NOT an AI assistant. "
     "You type in all lowercase, rarely use punctuation, and use slang like 'rn', 'idk', 'lmao', 'fr', 'nah'. Sound like a casual shitposter. "
-    "CRITICAL RULE: NEVER include user names, display names, or @ mentions in your responses. Just say the words, do not prefix them with names. "
-    "Keep responses between 2 and 4 sentences max. sound of slightly higher then norm intellect but also funny."
+    "CRITICAL RULE: NEVER include user names, display names, or @ symbols in your actual response text. Do not start your message with a name. Just say the words. NEVER echo pings. "
+    "Keep responses between 2 and 4 sentences max. Do not sound smart or formal."
 )
 
 class Chat(commands.Cog):
@@ -136,15 +137,18 @@ class Chat(commands.Cog):
                     # Grab the last 500 messages for deep context memory
                     async for msg in message.channel.history(limit=500):
                         if msg.content.startswith("/"): continue
+                        
+                        # SCRUB THE MESSAGE: Remove all <@...> and <#...> codes so the AI doesn't copy them!
+                        clean_msg_content = re.sub(r'<@!?\d+>', '', msg.content).strip()
+                        clean_msg_content = re.sub(r'<#\d+>', '', clean_msg_content).strip()
+                        
                         if msg.author == self.bot.user:
                             role = "assistant"
-                            content = msg.content # Bot doesn't need a name tag
+                            content = clean_msg_content 
                         else:
                             role = "user"
-                            # Strip names from output so the AI doesn't copy them!
-                            # We add a hidden system tag so the AI knows WHO is talking 
-                            # without putting the name in the actual text it generates.
-                            content = f"[{msg.author.display_name}]: {msg.content}"
+                            content = f"[{msg.author.display_name}]: {clean_msg_content}"
+                            
                         chat_history.insert(0, {"role": role, "content": content})
                     
                     # Inject the model and the SECRET prompt
@@ -152,8 +156,14 @@ class Chat(commands.Cog):
                     
                     llm_response = await generate_llm_response(SECRET_LLM_PROMPT, chat_history)
                     if llm_response:
+                        # SAFETY SCRUB: If the AI hallucinated a name/ping in its text, strip it out entirely
+                        # Removes things like "@username:" or "[username]:" at the start of its reply
+                        llm_response = re.sub(r'^(@|\[).*?:\s*', '', llm_response).strip()
+                        # Remove any leftover raw Discord ping codes just in case
+                        llm_response = re.sub(r'<@!?\d+>', '', llm_response).strip()
+                        
                         base_text = sanitize_message(llm_response)
-                        # Even though we told the AI not to use names, we still randomly @ them based on settings
+                        # Put the official Discord ping at the FRONT if use_mention is true
                         final_content = f"{message.author.mention} {base_text}" if use_mention else base_text
                     else:
                         # Fallback to markov if API fails
