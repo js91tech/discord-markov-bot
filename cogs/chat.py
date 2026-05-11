@@ -14,45 +14,39 @@ class Chat(commands.Cog):
         self.chains = {}
         self.channel_counters = {}
         self.channel_cooldowns = {}
-        
-        # Short-term memory to prevent the bot from repeating itself or copy-pasting users
         self.bot_recent_messages = {} 
 
     async def get_chain(self, guild_id, order):
         if guild_id not in self.chains:
             self.chains[guild_id] = MarkovChain(order=order)
-            self.chains[guild_id].chain = await self.db.get_markov(guild_id)
+            # Load from database using the new safe format
+            raw_chain = await self.db.get_markov(guild_id)
+            if raw_chain:
+                self.chains[guild_id].from_dict(raw_chain)
         return self.chains[guild_id]
 
     def _generate_unique_response(self, chain, seed, trigger_text, guild_id, min_words, max_words):
-        """Generates a response and ensures it's not a direct copy of the trigger or recent bot messages."""
         recent_bot_msgs = self.bot_recent_messages.get(guild_id, [])
         response = None
         
-        for _ in range(5): # Try up to 5 times to get a unique message
+        for _ in range(5):
             generated = chain.generate(min_words=min_words, max_words=max_words, seed=seed)
             if generated:
                 gen_clean = generated.lower().strip()
                 trig_clean = trigger_text.lower().strip()
                 
-                # 1. Make sure it's not a word-for-word copy of what the user just said
                 if gen_clean == trig_clean:
                     continue
-                    
-                # 2. Make sure the bot hasn't said this exact thing in its last 10 messages
                 if gen_clean in recent_bot_msgs:
                     continue
                     
-                # Success! It's unique enough.
                 response = generated
                 break
                 
-        # Update the bot's short-term memory with the new message
         if response:
             if guild_id not in self.bot_recent_messages:
                 self.bot_recent_messages[guild_id] = []
             self.bot_recent_messages[guild_id].append(response.lower().strip())
-            # Only keep the last 10 messages in memory to save RAM
             self.bot_recent_messages[guild_id] = self.bot_recent_messages[guild_id][-10:]
             
         return response
@@ -70,8 +64,9 @@ class Chat(commands.Cog):
                     clean_line = line.strip()
                     if clean_line:
                         chain.learn(clean_line)
-                for key, values in chain.chain.items():
-                    await self.db.save_markov_key(guild.id, key, values)
+                
+                # Save using the new safe format
+                await self.db.save_full_chain(guild.id, chain.to_dict())
                 await self.db.increment_stat(guild.id, "messages_learned", len(lines))
                 print(f"Loaded starter brain for new guild: {guild.name}")
             except FileNotFoundError:
@@ -99,13 +94,16 @@ class Chat(commands.Cog):
         if is_bot and not settings["learn_from_bots"]:
             return
 
-        # 1. LEARNING
+        # 1. LEARNING (With Persistent Saving)
         if settings["learning_enabled"] and not message.content.startswith("/"):
             chain = await self.get_chain(guild_id, settings["markov_order"])
             chain.learn(message.content)
             words = message.content.lower().split()
             if len(words) >= chain.order:
                 await self.db.increment_stat(guild_id, "messages_learned")
+                # Save the whole chain back to DB every 20 messages so reboots don't lose data
+                if stats_result["messages_learned"] % 20 == 0:
+                    await self.db.save_full_chain(guild_id, chain.to_dict())
 
         if is_bot or message.content.startswith("/"):
             return
@@ -140,7 +138,6 @@ class Chat(commands.Cog):
 
         # 3. RESPONSE GENERATION
         if should_respond:
-            # --- EMOJI REACTION FEATURE ---
             if random.random() < settings["reaction_chance"]:
                 emoji_options = ['💀', '😭', '🔥', '💯', '🤣', '🙄', '👀', '🫡', '🤨']
                 try:
@@ -150,7 +147,6 @@ class Chat(commands.Cog):
                 except discord.errors.HTTPException:
                     pass 
 
-            # --- FAKE TYPING FEATURE ---
             async with message.channel.typing():
                 use_reply = is_reply or (random.random() < settings["random_reply_chance"])
                 use_mention = is_mentioned or (random.random() < settings["random_mention_chance"])
@@ -172,8 +168,6 @@ class Chat(commands.Cog):
                 
                 if not use_gif:
                     chain = await self.get_chain(guild_id, settings["markov_order"])
-                    
-                    # Use the new deduplication generator
                     response = self._generate_unique_response(
                         chain=chain,
                         seed=message.content,
@@ -189,7 +183,6 @@ class Chat(commands.Cog):
                         base_text = sanitize_message(base_text)
                         final_content = f"{message.author.mention} {base_text}" if use_mention else base_text
 
-                # Send the message
                 if final_content:
                     try:
                         await message.channel.send(final_content, reference=reference)
@@ -197,11 +190,9 @@ class Chat(commands.Cog):
                         self.channel_counters[channel_id] = 0
                         await self.db.increment_stat(guild_id, "messages_sent")
                         
-                        # BURST MODE
                         if not use_gif and random.random() < settings["burst_chance"]:
                             async with message.channel.typing():
                                 chain = await self.get_chain(guild_id, settings["markov_order"])
-                                # Burst message uses the generated response as the trigger text to avoid repeating it
                                 burst_response = self._generate_unique_response(
                                     chain=chain,
                                     seed=None,
