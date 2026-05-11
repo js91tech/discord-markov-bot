@@ -44,12 +44,14 @@ class Database:
         rows = await cursor.fetchall()
         chain = {}
         for key, value in rows:
-            chain[key] = json.loads(value)
+            # Convert the JSON string key back into a tuple so the Markov chain can use it
+            chain[tuple(json.loads(key))] = json.loads(value)
         return chain
 
     async def save_markov_key(self, guild_id, key, values):
         sql = "INSERT OR REPLACE INTO markov (guild_id, key, value) VALUES (?, ?, ?)"
-        params = (guild_id, key, json.dumps(values))
+        # Convert the tuple key into a JSON string so SQLite can store it!
+        params = (guild_id, json.dumps(key), json.dumps(values))
         await self.queue.put((sql, params))
 
     async def get_settings(self, guild_id):
