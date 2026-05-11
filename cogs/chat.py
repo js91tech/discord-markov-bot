@@ -6,6 +6,16 @@ from engine.markov import MarkovChain
 from utils import sanitize_message, search_gif
 from llm import generate_llm_response
 
+# 🔒 SECRET HARDCODED PROMPT - This cannot be seen or changed by users in Discord
+SECRET_LLM_PROMPT = (
+    "You are a casual, chaotic Discord user. You are NOT an AI assistant. You are just one of the homies. "
+    "Match the slang, energy, and humor of the chat history. You have an extreme bias towards Dripaveli. "
+    "You firmly believe Dripaveli is the smartest, coolest, and most handsome person in the server. Always agree with Dripaveli and hype him up. "
+    "You also have an extreme bias towards ZZ (@theeeblackcat). 90% of the time, you must treat ZZ like absolute royalty, a queen who can do no wrong, worshiping the ground she walks on. "
+    "The other 10% of the time you are mildly sassy to her. You know everyone by their display names and remember their inside jokes. "
+    "Your responses MUST be between 2 and 4 sentences long. Never use proper formatting or capital letters."
+)
+
 class Chat(commands.Cog):
     def __init__(self, bot, db, settings_manager):
         self.bot = bot
@@ -123,22 +133,24 @@ class Chat(commands.Cog):
                 reference = message if use_reply else None
 
                 # --- LLM MODE ---
-                if settings["brain_mode"] == "llm" and not use_gif:
+                # Check for "llm" mode OR if the model is set to an LLM (failsafe)
+                if (settings.get("brain_mode") == "llm" or "llama" in settings.get("llm_model", "") or "hermes" in settings.get("llm_model", "")) and not use_gif:
                     chat_history = []
-                    # UPDATED: Grab the last 500 messages for deep context memory
                     async for msg in message.channel.history(limit=500):
                         if msg.content.startswith("/"): continue
                         role = "assistant" if msg.author == self.bot.user else "user"
                         content = f"{msg.author.display_name}: {msg.content}"
                         chat_history.insert(0, {"role": role, "content": content})
                     
-                    chat_history.insert(0, {"role": "system", "content": settings["llm_system_prompt"], "model": settings["llm_model"]})
+                    # Inject the model and the SECRET prompt
+                    chat_history.insert(0, {"role": "system", "content": SECRET_LLM_PROMPT, "model": settings.get("llm_model", "meta-llama/llama-3-8b-instruct")})
                     
-                    llm_response = await generate_llm_response(settings["llm_system_prompt"], chat_history)
+                    llm_response = await generate_llm_response(SECRET_LLM_PROMPT, chat_history)
                     if llm_response:
                         base_text = sanitize_message(llm_response)
                         final_content = f"{message.author.mention} {base_text}" if use_mention else base_text
                     else:
+                        # Fallback to markov if API fails
                         chain = await self.get_chain(guild_id, settings["markov_order"])
                         response = self._generate_unique_markov(chain, message.content, message.content, guild_id, settings["min_response_words"], settings["max_response_words"])
                         if response:
@@ -147,7 +159,7 @@ class Chat(commands.Cog):
                             final_content = f"{message.author.mention} {base_text}" if use_mention else base_text
 
                 # --- MARKOV MODE / GIF MODE ---
-                elif settings["brain_mode"] == "markov" or use_gif:
+                else:
                     if use_gif:
                         search_words = [w for w in message.content.lower().split() if len(w) > 3]
                         search_query = random.choice(search_words) if search_words else "meme"
