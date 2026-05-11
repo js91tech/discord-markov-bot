@@ -4,6 +4,7 @@ import random
 import time
 from engine.markov import MarkovChain
 from utils import sanitize_message, search_gif
+from llm import generate_llm_response
 
 class Chat(commands.Cog):
     def __init__(self, bot, db, settings_manager):
@@ -19,13 +20,12 @@ class Chat(commands.Cog):
     async def get_chain(self, guild_id, order):
         if guild_id not in self.chains:
             self.chains[guild_id] = MarkovChain(order=order)
-            # Load from database using the new safe format
             raw_chain = await self.db.get_markov(guild_id)
             if raw_chain:
                 self.chains[guild_id].from_db_dict(raw_chain)
         return self.chains[guild_id]
 
-    def _generate_unique_response(self, chain, seed, trigger_text, guild_id, min_words, max_words):
+    def _generate_unique_markov(self, chain, seed, trigger_text, guild_id, min_words, max_words):
         recent_bot_msgs = self.bot_recent_messages.get(guild_id, [])
         response = None
         
@@ -34,21 +34,15 @@ class Chat(commands.Cog):
             if generated:
                 gen_clean = generated.lower().strip()
                 trig_clean = trigger_text.lower().strip()
-                
-                if gen_clean == trig_clean:
-                    continue
-                if gen_clean in recent_bot_msgs:
-                    continue
-                    
+                if gen_clean == trig_clean: continue
+                if gen_clean in recent_bot_msgs: continue
                 response = generated
                 break
                 
         if response:
-            if guild_id not in self.bot_recent_messages:
-                self.bot_recent_messages[guild_id] = []
+            if guild_id not in self.bot_recent_messages: self.bot_recent_messages[guild_id] = []
             self.bot_recent_messages[guild_id].append(response.lower().strip())
             self.bot_recent_messages[guild_id] = self.bot_recent_messages[guild_id][-10:]
-            
         return response
 
     @commands.Cog.listener()
@@ -62,39 +56,26 @@ class Chat(commands.Cog):
                 chain = await self.get_chain(guild.id, settings["markov_order"])
                 for line in lines:
                     clean_line = line.strip()
-                    if clean_line:
-                        chain.learn(clean_line)
-                
-                # Save using the new safe format
+                    if clean_line: chain.learn(clean_line)
                 await self.db.save_full_chain(guild.id, chain.to_db_dict())
                 await self.db.increment_stat(guild.id, "messages_learned", len(lines))
-                print(f"Loaded starter brain for new guild: {guild.name}")
-            except FileNotFoundError:
-                pass
-            except Exception as e:
-                print(f"Error loading starter brain: {e}")
+            except: pass
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
-        if message.guild is None or message.author == self.bot.user:
-            return
+        if message.guild is None or message.author == self.bot.user: return
 
         guild_id = message.guild.id
         channel_id = message.channel.id
         settings = await self.settings_manager.get_settings(guild_id)
 
-        if channel_id in settings["ignored_channels"]: 
-            return
-        if settings["allowed_channels"] and channel_id not in settings["allowed_channels"]: 
-            return
-        if message.author.id in settings["ignored_users"]: 
-            return
+        if channel_id in settings["ignored_channels"]: return
+        if settings["allowed_channels"] and channel_id not in settings["allowed_channels"]: return
+        if message.author.id in settings["ignored_users"]: return
         
         is_bot = message.author.bot
-        if is_bot and not settings["learn_from_bots"]:
-            return
+        if is_bot and not settings["learn_from_bots"]: return
 
-        # 1. LEARNING
         if settings["learning_enabled"] and not message.content.startswith("/"):
             chain = await self.get_chain(guild_id, settings["markov_order"])
             chain.learn(message.content)
@@ -102,42 +83,29 @@ class Chat(commands.Cog):
             if len(words) >= chain.order:
                 stats = await self.db.get_stats(guild_id)
                 await self.db.increment_stat(guild_id, "messages_learned")
-                # Save the whole chain back to DB every 20 messages so reboots don't lose context
                 if stats["messages_learned"] % 20 == 0:
                     await self.db.save_full_chain(guild_id, chain.to_db_dict())
 
-        if is_bot or message.content.startswith("/"):
-            return
+        if is_bot or message.content.startswith("/"): return
+        if not settings["response_enabled"]: return
 
-        if not settings["response_enabled"]:
-            return
-
-        if channel_id not in self.channel_counters:
-            self.channel_counters[channel_id] = 0
+        if channel_id not in self.channel_counters: self.channel_counters[channel_id] = 0
         self.channel_counters[channel_id] += 1
 
-        # 2. TRIGGER LOGIC
         should_respond = False
         is_mentioned = self.bot.user.mentioned_in(message)
         is_reply = (message.reference and message.reference.resolved and 
                     message.reference.resolved.author == self.bot.user)
 
-        if is_mentioned and settings["trigger_on_mention"]:
-            should_respond = True
-        elif is_reply and settings["trigger_on_reply"]:
-            should_respond = True
+        if is_mentioned and settings["trigger_on_mention"]: should_respond = True
+        elif is_reply and settings["trigger_on_reply"]: should_respond = True
         elif random.random() < settings["response_chance"]:
             if channel_id in self.channel_cooldowns:
-                if time.time() - self.channel_cooldowns[channel_id] < settings["cooldown_seconds"]:
-                    should_respond = False
-                elif self.channel_counters[channel_id] < settings["min_messages_before_respond"]:
-                    should_respond = False
-                else:
-                    should_respond = True
-            else:
-                should_respond = True
+                if time.time() - self.channel_cooldowns[channel_id] < settings["cooldown_seconds"]: should_respond = False
+                elif self.channel_counters[channel_id] < settings["min_messages_before_respond"]: should_respond = False
+                else: should_respond = True
+            else: should_respond = True
 
-        # 3. RESPONSE GENERATION
         if should_respond:
             if random.random() < settings["reaction_chance"]:
                 emoji_options = ['💀', '😭', '🔥', '💯', '🤣', '🙄', '👀', '🫡', '🤨']
@@ -145,44 +113,58 @@ class Chat(commands.Cog):
                     await message.add_reaction(random.choice(emoji_options))
                     self.channel_cooldowns[channel_id] = time.time()
                     return 
-                except discord.errors.HTTPException:
-                    pass 
+                except discord.errors.HTTPException: pass 
 
             async with message.channel.typing():
                 use_reply = is_reply or (random.random() < settings["random_reply_chance"])
                 use_mention = is_mentioned or (random.random() < settings["random_mention_chance"])
                 use_gif = (random.random() < settings["gif_chance"])
-
                 final_content = None
                 reference = message if use_reply else None
 
-                if use_gif:
-                    search_words = [w for w in message.content.lower().split() if len(w) > 3]
-                    search_query = random.choice(search_words) if search_words else "meme"
-                    gif_url = await search_gif(search_query)
+                # --- LLM MODE ---
+                if settings["brain_mode"] == "llm" and not use_gif:
+                    chat_history = []
+                    # UPDATED: Grab the last 500 messages for deep context memory
+                    async for msg in message.channel.history(limit=500):
+                        if msg.content.startswith("/"): continue
+                        role = "assistant" if msg.author == self.bot.user else "user"
+                        content = f"{msg.author.display_name}: {msg.content}"
+                        chat_history.insert(0, {"role": role, "content": content})
                     
-                    if gif_url:
-                        final_content = f"{message.author.mention} " if use_mention else ""
-                        final_content += gif_url
-                    else:
-                        use_gif = False
-                
-                if not use_gif:
-                    chain = await self.get_chain(guild_id, settings["markov_order"])
-                    response = self._generate_unique_response(
-                        chain=chain,
-                        seed=message.content,
-                        trigger_text=message.content,
-                        guild_id=guild_id,
-                        min_words=settings["min_response_words"],
-                        max_words=settings["max_response_words"]
-                    )
+                    chat_history.insert(0, {"role": "system", "content": settings["llm_system_prompt"], "model": settings["llm_model"]})
                     
-                    if response:
-                        prefix = settings["personality_prefix"]
-                        base_text = f"{prefix} {response}".strip()
-                        base_text = sanitize_message(base_text)
+                    llm_response = await generate_llm_response(settings["llm_system_prompt"], chat_history)
+                    if llm_response:
+                        base_text = sanitize_message(llm_response)
                         final_content = f"{message.author.mention} {base_text}" if use_mention else base_text
+                    else:
+                        chain = await self.get_chain(guild_id, settings["markov_order"])
+                        response = self._generate_unique_markov(chain, message.content, message.content, guild_id, settings["min_response_words"], settings["max_response_words"])
+                        if response:
+                            base_text = f"{settings['personality_prefix']} {response}".strip()
+                            base_text = sanitize_message(base_text)
+                            final_content = f"{message.author.mention} {base_text}" if use_mention else base_text
+
+                # --- MARKOV MODE / GIF MODE ---
+                elif settings["brain_mode"] == "markov" or use_gif:
+                    if use_gif:
+                        search_words = [w for w in message.content.lower().split() if len(w) > 3]
+                        search_query = random.choice(search_words) if search_words else "meme"
+                        gif_url = await search_gif(search_query)
+                        if gif_url:
+                            final_content = f"{message.author.mention} " if use_mention else ""
+                            final_content += gif_url
+                        else: use_gif = False
+                    
+                    if not use_gif:
+                        chain = await self.get_chain(guild_id, settings["markov_order"])
+                        response = self._generate_unique_markov(chain, message.content, message.content, guild_id, settings["min_response_words"], settings["max_response_words"])
+                        if response:
+                            prefix = settings["personality_prefix"]
+                            base_text = f"{prefix} {response}".strip()
+                            base_text = sanitize_message(base_text)
+                            final_content = f"{message.author.mention} {base_text}" if use_mention else base_text
 
                 if final_content:
                     try:
@@ -190,21 +172,6 @@ class Chat(commands.Cog):
                         self.channel_cooldowns[channel_id] = time.time()
                         self.channel_counters[channel_id] = 0
                         await self.db.increment_stat(guild_id, "messages_sent")
-                        
-                        if not use_gif and random.random() < settings["burst_chance"]:
-                            async with message.channel.typing():
-                                chain = await self.get_chain(guild_id, settings["markov_order"])
-                                burst_response = self._generate_unique_response(
-                                    chain=chain,
-                                    seed=None,
-                                    trigger_text=final_content,
-                                    guild_id=guild_id,
-                                    min_words=settings["min_response_words"],
-                                    max_words=settings["max_response_words"]
-                                )
-                                if burst_response:
-                                    burst_text = sanitize_message(f"{settings['personality_prefix']} {burst_response}".strip())
-                                    await message.channel.send(burst_text)
                     except discord.errors.HTTPException as e:
                         print(f"Error sending message: {e}")
 
