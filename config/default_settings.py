@@ -1,6 +1,6 @@
 DEFAULTS = {
     "response_chance": 0.05,
-    "cooldown_seconds": 30,
+    "cooldown_seconds": 15,               # CHANGED FROM 30 TO 15
     "min_messages_before_respond": 3,
     "markov_order": 2,
     "min_response_words": 4,
@@ -21,7 +21,9 @@ DEFAULTS = {
     "reaction_chance": 0.08,
     "brain_mode": "markov",
     "llm_model": "meta-llama/llama-3-8b-instruct",
-    "llm_system_prompt": "HIDDEN" # This is now hardcoded in chat.py, so users can't see or change it
+    "llm_system_prompt": "HIDDEN",
+    "conversation_window_seconds": 300,    # NEW: How long after speaking the bot stays "engaged"
+    "indirect_reply_chance": 0.70         # NEW: 70% chance to reply to indirect responses during the window
 }
 
 VALIDATORS = {
@@ -47,5 +49,7 @@ VALIDATORS = {
     "reaction_chance": lambda x: 0.0 <= float(x) <= 1.0,
     "brain_mode": lambda x: str(x).lower() in ["markov", "llm"],
     "llm_model": lambda x: isinstance(x, str),
-    "llm_system_prompt": lambda x: isinstance(x, str)
+    "llm_system_prompt": lambda x: isinstance(x, str),
+    "conversation_window_seconds": lambda x: int(x) > 0,
+    "indirect_reply_chance": lambda x: 0.0 <= float(x) <= 1.0
 }
