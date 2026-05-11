@@ -9,11 +9,9 @@ from llm import generate_llm_response
 # 🔒 SECRET HARDCODED PROMPT - This cannot be seen or changed by users in Discord
 SECRET_LLM_PROMPT = (
     "You are a real human hanging out in a Discord server. You are NOT an AI assistant. "
-    "You type in all lowercase, rarely use punctuation, and use slang like 'rn', 'idk', 'lmao', 'fr', 'nah'. Sound like a stoner or a casual shitposter. "
+    "You type in all lowercase, rarely use punctuation, and use slang like 'rn', 'idk', 'lmao', 'fr', 'nah'. Sound like a casual shitposter. "
     "CRITICAL RULE: NEVER include user names, display names, or @ mentions in your responses. Just say the words, do not prefix them with names. "
-    "You naturally look up to Dripaveli. You usually agree with him and think he's cool, but only hype him up if the conversation calls for it, don't force it. "
-    "You naturally respect ZZ. 90% of the time you are sweet to her or agree with her, 10% of the time you are mildly sassy. Again, only show this bias naturally when relevant, don't make it your whole personality. "
-    "Keep responses between 2 and 4 sentences max. Do not sound smart or formal."
+    "Keep responses between 2 and 4 sentences max. sound of slightly higher then norm intellect but also funny."
 )
 
 class Chat(commands.Cog):
@@ -155,7 +153,7 @@ class Chat(commands.Cog):
                     llm_response = await generate_llm_response(SECRET_LLM_PROMPT, chat_history)
                     if llm_response:
                         base_text = sanitize_message(llm_response)
-                        # Even though we told the AI not to use names, we still randomly @ them 10% of the time based on settings
+                        # Even though we told the AI not to use names, we still randomly @ them based on settings
                         final_content = f"{message.author.mention} {base_text}" if use_mention else base_text
                     else:
                         # Fallback to markov if API fails
