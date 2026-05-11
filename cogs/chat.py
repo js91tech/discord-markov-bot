@@ -2,16 +2,16 @@ import discord
 from discord.ext import commands
 import random
 import time
-import re # Added for scrubbing @mentions
+import re 
 from engine.markov import MarkovChain
 from utils import sanitize_message, search_gif
 from llm import generate_llm_response
 
-# 🔒 SECRET HARDCODED PROMPT - This cannot be seen or changed by users in Discord
+# 🔒 SECRET HARDCODED PROMPT
 SECRET_LLM_PROMPT = (
     "You are a real human hanging out in a Discord server. You are NOT an AI assistant. "
     "You type in all lowercase, rarely use punctuation, and use slang like 'rn', 'idk', 'lmao', 'fr', 'nah'. Sound like a casual shitposter. "
-    "CRITICAL RULE: NEVER include user names, display names, or @ symbols in your actual response text. Do not start your message with a name. Just say the words. NEVER echo pings. "
+    "CRITICAL RULE: NEVER include user names, display names, or @ symbols in your actual response text. Do not start your message with a name. Just say the words. NEVER echo pings or names. "
     "Keep responses between 2 and 4 sentences max. Do not sound smart or formal."
 )
 
@@ -134,7 +134,6 @@ class Chat(commands.Cog):
                 # --- LLM MODE ---
                 if (settings.get("brain_mode") == "llm" or "llama" in settings.get("llm_model", "") or "hermes" in settings.get("llm_model", "")) and not use_gif:
                     chat_history = []
-                    # Grab the last 500 messages for deep context memory
                     async for msg in message.channel.history(limit=500):
                         if msg.content.startswith("/"): continue
                         
@@ -147,26 +146,22 @@ class Chat(commands.Cog):
                             content = clean_msg_content 
                         else:
                             role = "user"
-                            content = f"[{msg.author.display_name}]: {clean_msg_content}"
+                            # FIX: Removed the brackets! Just Name: message
+                            content = f"{msg.author.display_name}: {clean_msg_content}"
                             
                         chat_history.insert(0, {"role": role, "content": content})
                     
-                    # Inject the model and the SECRET prompt
                     chat_history.insert(0, {"role": "system", "content": SECRET_LLM_PROMPT, "model": settings.get("llm_model", "meta-llama/llama-3-8b-instruct")})
                     
                     llm_response = await generate_llm_response(SECRET_LLM_PROMPT, chat_history)
                     if llm_response:
-                        # SAFETY SCRUB: If the AI hallucinated a name/ping in its text, strip it out entirely
-                        # Removes things like "@username:" or "[username]:" at the start of its reply
-                        llm_response = re.sub(r'^(@|\[).*?:\s*', '', llm_response).strip()
-                        # Remove any leftover raw Discord ping codes just in case
-                        llm_response = re.sub(r'<@!?\d+>', '', llm_response).strip()
+                        # AGGRESSIVE SAFETY SCRUB: Strip any "Name:" or "@Name" the AI tries to start the sentence with
+                        llm_response = re.sub(r'^.{0,30}?:\s*', '', llm_response).strip() # Strips "Name: " at the start
+                        llm_response = re.sub(r'<@!?\d+>', '', llm_response).strip() # Strips raw pings
                         
                         base_text = sanitize_message(llm_response)
-                        # Put the official Discord ping at the FRONT if use_mention is true
                         final_content = f"{message.author.mention} {base_text}" if use_mention else base_text
                     else:
-                        # Fallback to markov if API fails
                         chain = await self.get_chain(guild_id, settings["markov_order"])
                         response = self._generate_unique_markov(chain, message.content, message.content, guild_id, settings["min_response_words"], settings["max_response_words"])
                         if response:
