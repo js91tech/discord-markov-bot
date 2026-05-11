@@ -3,32 +3,15 @@ import discord
 from discord.ext import commands
 from engine.database import Database
 from config.settings_manager import SettingsManager
-from cogs.chat import Chat               # <-- This was missing!
-from cogs.settings_cog import SettingsCog # <-- This was missing!
-from flask import Flask
-import threading
+from cogs.chat import Chat
+from cogs.settings_cog import SettingsCog
+from keep_alive import keep_alive
 import asyncio
 import aiohttp
 
-# --- KEEP AWAKE WEB SERVER ---
-app = Flask('')
-
-@app.route('/')
-def home():
-    return "Bot is alive and running!"
-
-def run_web():
-    port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port)
-
-def keep_alive():
-    t = threading.Thread(target=run_web)
-    t.daemon = True
-    t.start()
-
-# Self-ping to keep Render Free Web Service awake
+# Self-ping to keep Render awake
 async def self_ping():
-    await asyncio.sleep(60) # Wait 1 minute for the server to start
+    await asyncio.sleep(60)
     render_url = os.environ.get('RENDER_EXTERNAL_URL')
     if render_url:
         while True:
@@ -37,8 +20,7 @@ async def self_ping():
                     await session.get(render_url)
             except:
                 pass
-            await asyncio.sleep(240) # Ping every 4 minutes
-# ------------------------------
+            await asyncio.sleep(240)
 
 intents = discord.Intents.default()
 intents.message_content = True
