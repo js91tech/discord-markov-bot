@@ -8,7 +8,6 @@ from llm import generate_llm_response
 
 # 🔒 SECRET HARDCODED PROMPT - This cannot be seen or changed by users in Discord
 SECRET_LLM_PROMPT = (
-   SECRET_LLM_PROMPT = (
     "You are a real human hanging out in a Discord server. You are NOT an AI assistant. "
     "You type in all lowercase, rarely use punctuation, and use slang like 'rn', 'idk', 'lmao', 'fr', 'nah'. Sound like a stoner or a casual shitposter. "
     "CRITICAL RULE: NEVER include user names, display names, or @ mentions in your responses. Just say the words, do not prefix them with names. "
@@ -134,13 +133,20 @@ class Chat(commands.Cog):
                 reference = message if use_reply else None
 
                 # --- LLM MODE ---
-                # Check for "llm" mode OR if the model is set to an LLM (failsafe)
                 if (settings.get("brain_mode") == "llm" or "llama" in settings.get("llm_model", "") or "hermes" in settings.get("llm_model", "")) and not use_gif:
                     chat_history = []
+                    # Grab the last 500 messages for deep context memory
                     async for msg in message.channel.history(limit=500):
                         if msg.content.startswith("/"): continue
-                        role = "assistant" if msg.author == self.bot.user else "user"
-                        content = f"{msg.author.display_name}: {msg.content}"
+                        if msg.author == self.bot.user:
+                            role = "assistant"
+                            content = msg.content # Bot doesn't need a name tag
+                        else:
+                            role = "user"
+                            # Strip names from output so the AI doesn't copy them!
+                            # We add a hidden system tag so the AI knows WHO is talking 
+                            # without putting the name in the actual text it generates.
+                            content = f"[{msg.author.display_name}]: {msg.content}"
                         chat_history.insert(0, {"role": role, "content": content})
                     
                     # Inject the model and the SECRET prompt
@@ -149,6 +155,7 @@ class Chat(commands.Cog):
                     llm_response = await generate_llm_response(SECRET_LLM_PROMPT, chat_history)
                     if llm_response:
                         base_text = sanitize_message(llm_response)
+                        # Even though we told the AI not to use names, we still randomly @ them 10% of the time based on settings
                         final_content = f"{message.author.mention} {base_text}" if use_mention else base_text
                     else:
                         # Fallback to markov if API fails
