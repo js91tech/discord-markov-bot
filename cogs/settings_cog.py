@@ -2,6 +2,8 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 from config.default_settings import DEFAULTS, VALIDATORS
+from engine.markov import MarkovChain
+from utils import sanitize_message
 import json
 
 class SettingsCog(commands.Cog):
@@ -45,8 +47,9 @@ class SettingsCog(commands.Cog):
         elif isinstance(DEFAULTS[key], list):
             try:
                 parsed_val = json.loads(value)
-                if not isinstance(parsed_val, list): raise ValueError
-            except:
+                if not isinstance(parsed_val, list): 
+                    raise ValueError
+            except Exception:
                 await interaction.response.send_message("❌ List values must be a JSON array, e.g. `[1, 2]`", ephemeral=True)
                 return
         else:
@@ -75,4 +78,127 @@ class SettingsCog(commands.Cog):
         await interaction.response.send_message(f"**{setting.name}** is now {status}", ephemeral=True)
 
     # --- /botsettings chattiness (SLIDER CHOICES) ---
-    @group.command(name="chattiness", description
+    @group.command(name="chattiness", description="Quick adjust how chatty the bot is")
+    @app_commands.describe(level="Select a chattiness level")
+    @app_commands.choices(level=[
+        app_commands.Choice(name="1 - Almost Never Speaks", value=1),
+        app_commands.Choice(name="2", value=2),
+        app_commands.Choice(name="3 - Occasional", value=3),
+        app_commands.Choice(name="4", value=4),
+        app_commands.Choice(name="5 - Average", value=5),
+        app_commands.Choice(name="6", value=6),
+        app_commands.Choice(name="7 - Fairly Chatty", value=7),
+        app_commands.Choice(name="8", value=8),
+        app_commands.Choice(name="9", value=9),
+        app_commands.Choice(name="10 - Won't Shut Up", value=10)
+    ])
+    async def chattiness(self, interaction: discord.Interaction, level: app_commands.Choice[int]):
+        chance = round(level.value * 0.03, 2)
+        await self.settings_manager.set_setting(interaction.guild.id, "response_chance", chance)
+        await interaction.response.send_message(f"🗣️ Chattiness set to **{level.name}**. Response chance is now {chance*100}%", ephemeral=True)
+
+    # --- /botsettings markov (CHOICES) ---
+    @group.command(name="markov", description="Change how smart the bot's brain is")
+    @app_commands.describe(level="Select a brain level")
+    @app_commands.choices(level=[
+        app_commands.Choice(name="1 - Random (Word Salad)", value=1),
+        app_commands.Choice(name="2 - Balanced (Default)", value=2),
+        app_commands.Choice(name="3 - Coherent (Needs lots of messages)", value=3)
+    ])
+    async def markov(self, interaction: discord.Interaction, level: app_commands.Choice[int]):
+        await self.settings_manager.set_setting(interaction.guild.id, "markov_order", level.value)
+        # Clear the chain from memory so it reloads with the new order
+        if interaction.guild.id in self.bot.get_cog("Chat").chains:
+            del self.bot.get_cog("Chat").chains[interaction.guild.id]
+        await interaction.response.send_message(f"🧠 Markov order set to **{level.name}**", ephemeral=True)
+
+    # --- /mimic (SLASH COMMAND) ---
+    @group.command(name="mimic", description="Generate a message mimicking a specific user")
+    @app_commands.describe(user="The user you want to mimic")
+    async def mimic(self, interaction: discord.Interaction, user: discord.Member):
+        if user.bot:
+            await interaction.response.send_message("I only mimic humans! 🤖", ephemeral=True)
+            return
+
+        await interaction.response.defer(thinking=True) # Show "Bot is thinking..." while we scan messages
+        
+        # Efficiently build a temporary brain just from the last 100 messages by this user
+        temp_chain = MarkovChain(order=2)
+        messages_found = 0
+        
+        async for msg in interaction.channel.history(limit=200):
+            if msg.author.id == user.id and not msg.content.startswith("/"):
+                temp_chain.learn(msg.content)
+                messages_found += 1
+                if messages_found >= 50: # Stop after 50 of their messages to save RAM/time
+                    break
+        
+        if messages_found < 5:
+            await interaction.followup.send(f"{user.display_name} hasn't talked enough here for me to mimic them!", ephemeral=True)
+            return
+
+        response = temp_chain.generate(min_words=4, max_response_words=40)
+        if response:
+            await interaction.followup.send(f"**{user.display_name}:** {sanitize_message(response)}")
+        else:
+            await interaction.followup.send(f"I couldn't figure out how {user.display_name} talks!", ephemeral=True)
+
+    # --- STANDARD COMMANDS ---
+    @group.command(name="list", description="View all current settings")
+    async def list_settings(self, interaction: discord.Interaction):
+        settings = await self.settings_manager.get_settings(interaction.guild.id)
+        embed = discord.Embed(title="Bot Settings", color=discord.Color.blue())
+        for key, value in settings.items():
+            embed.add_field(name=key, value=f"`{value}`", inline=True)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @group.command(name="stats", description="View learning statistics")
+    async def stats(self, interaction: discord.Interaction):
+        stats = await self.db.get_stats(interaction.guild.id)
+        embed = discord.Embed(title="Learning Stats", color=discord.Color.green())
+        embed.add_field(name="Messages Learned", value=str(stats["messages_learned"]), inline=True)
+        embed.add_field(name="Messages Sent", value=str(stats["messages_sent"]), inline=True)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @group.command(name="resetdata", description="Delete ALL learned data for this server")
+    async def reset_data(self, interaction: discord.Interaction):
+        await self.db.delete_guild_data(interaction.guild.id)
+        if interaction.guild.id in self.bot.get_cog("Chat").chains:
+            del self.bot.get_cog("Chat").chains[interaction.guild.id]
+        await self.settings_manager.reset_all(interaction.guild.id)
+        await interaction.response.send_message("💣 All learned data and settings have been wiped.", ephemeral=True)
+
+    @group.command(name="loadbrain", description="Manually load the starter brain text file")
+    async def load_brain(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        guild_id = interaction.guild.id
+        
+        try:
+            with open("training_data.txt", "r", encoding="utf-8") as f:
+                lines = f.readlines()
+        except FileNotFoundError:
+            await interaction.followup.send("❌ No `training_data.txt` file found!", ephemeral=True)
+            return
+
+        settings = await self.settings_manager.get_settings(guild_id)
+        chat_cog = self.bot.get_cog("Chat")
+        if not chat_cog:
+            await interaction.followup.send("❌ Chat cog not loaded.", ephemeral=True)
+            return
+
+        chain = await chat_cog.get_chain(guild_id, settings["markov_order"])
+        learned_count = 0
+        for line in lines:
+            clean_line = line.strip()
+            if clean_line:
+                chain.learn(clean_line)
+                learned_count += 1
+                
+        for key, values in chain.chain.items():
+            await self.db.save_markov_key(guild_id, key, values)
+            
+        await self.db.increment_stat(guild_id, "messages_learned", learned_count)
+        await interaction.followup.send(f"🧠 Successfully loaded starter brain! Learned {learned_count} lines.", ephemeral=True)
+
+async def setup(bot):
+    await bot.add_cog(SettingsCog(bot, bot.db, bot.settings_manager))
