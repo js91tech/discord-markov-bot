@@ -26,11 +26,13 @@ class Database:
                                     guild_id INTEGER PRIMARY KEY, 
                                     messages_learned INTEGER DEFAULT 0,
                                     messages_sent INTEGER DEFAULT 0)""")
-        # NEW: Memories table for permanent user facts
         await self.conn.execute("""CREATE TABLE IF NOT EXISTS memories (
                                     guild_id INTEGER, 
                                     user_id INTEGER, 
                                     note TEXT)""")
+        await self.conn.execute("""CREATE TABLE IF NOT EXISTS consolidated_memories (
+                                    guild_id INTEGER PRIMARY KEY, 
+                                    summary_json TEXT)""")
         await self.conn.commit()
         self._worker_task = asyncio.create_task(self._write_worker())
 
@@ -84,8 +86,8 @@ class Database:
         await self.queue.put(("DELETE FROM settings WHERE guild_id = ?", (guild_id,)))
         await self.queue.put(("DELETE FROM stats WHERE guild_id = ?", (guild_id,)))
         await self.queue.put(("DELETE FROM memories WHERE guild_id = ?", (guild_id,)))
+        await self.queue.put(("DELETE FROM consolidated_memories WHERE guild_id = ?", (guild_id,)))
 
-    # --- MEMORY RECALL FUNCTIONS ---
     async def add_memory(self, guild_id, user_id, note):
         sql = "INSERT INTO memories (guild_id, user_id, note) VALUES (?, ?, ?)"
         await self.queue.put((sql, (guild_id, user_id, note)))
@@ -97,3 +99,13 @@ class Database:
 
     async def forget_memories(self, guild_id, user_id):
         await self.queue.put(("DELETE FROM memories WHERE guild_id = ? AND user_id = ?", (guild_id, user_id)))
+
+    async def get_consolidated_memory(self, guild_id):
+        cursor = await self.conn.execute("SELECT summary_json FROM consolidated_memories WHERE guild_id = ?", (guild_id,))
+        row = await cursor.fetchone()
+        return json.loads(row[0]) if row else None
+
+    async def save_consolidated_memory(self, guild_id, summary_dict):
+        sql = "INSERT OR REPLACE INTO consolidated_memories (guild_id, summary_json) VALUES (?, ?)"
+        params = (guild_id, json.dumps(summary_dict))
+        await self.queue.put((sql, params))
