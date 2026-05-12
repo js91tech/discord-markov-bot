@@ -1,4 +1,12 @@
 import os
+import sys
+
+# --- PATH FIX FOR RENDER ---
+# This tells Python to look in the exact folder where this bot.py file lives
+# so it can find database.py, settings_manager.py, api.py, etc.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# ---------------------------
+
 import discord
 from discord.ext import commands
 import threading
