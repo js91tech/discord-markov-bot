@@ -5,10 +5,10 @@ import re
 from engine.markov import MarkovChain
 
 DB_PATH = "data/bot.db"
-GUILD_ID = 1388136234827649116 # We will put your Server ID here
+GUILD_ID = 1388136234827649116  # Set your Discord Server ID here
 
 async def train():
-    if GUILD_ID == 0:
+    if not GUILD_ID:
         print("ERROR: Please open trainer.py and set GUILD_ID to your Discord Server ID!")
         return
 
