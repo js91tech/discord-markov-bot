@@ -29,15 +29,6 @@ FALLBACK_QUOTES = [
     "anyone else feel like we're just delaying the inevitable",
     "i'd respond but i'm too busy judging everyone silently",
     "this is like watching a car crash in slow motion",
-    "sure let's go with that"
-    FALLBACK_QUOTES = [
-    "i'm just here for the chaos honestly",
-    "did i miss something or is this just the usual nonsense",
-    "my brain cells are buffering please hold",
-    "that's cute that you think i care",
-    "anyone else feel like we're just delaying the inevitable",
-    "i'd respond but i'm too busy judging everyone silently",
-    "this is like watching a car crash in slow motion",
     "sure let's go with that",
     "ah yes, the daily descent into madness",
     "i'd explain why you're wrong but life is short",
@@ -63,7 +54,7 @@ FALLBACK_QUOTES = [
     "every day we stray further from god's light",
     "you guys are weird and i'm here for it",
     "are we really doing this again"
-]
+] # FIXED: Properly closed bracket
 
 class Chat(commands.Cog):
     def __init__(self, bot, db, settings_manager):
@@ -213,7 +204,7 @@ class Chat(commands.Cog):
                             await message.author.send(f"❌ Failed to send: {e}")
                     else:
                         await message.author.send("❌ Target channel not found.")
-            return # Always return on DMs
+            return 
         
         if message.guild is None or message.author == self.bot.user: return
 
@@ -244,7 +235,11 @@ class Chat(commands.Cog):
 
         # --- MESSAGE COUNTING (4-10 Random Goal) ---
         if channel_id not in self.channel_counters: self.channel_counters[channel_id] = 0
-        self.channel_counters[channel_id] += 1
+        
+        # EFFICIENCY FIX: Only increment counter for real users, not the bot itself
+        if not message.author.bot:
+            self.channel_counters[channel_id] += 1
+            
         if channel_id not in self.channel_message_goals:
             self.channel_message_goals[channel_id] = random.randint(4, 10)
 
@@ -282,11 +277,10 @@ class Chat(commands.Cog):
                 should_respond = True
 
         # 4. APPLY COOLDOWN TO ALL TRIGGERS
-        # If we want to speak, we MUST ensure we aren't on cooldown to prevent double-speak
         if should_respond:
             if channel_id in self.channel_cooldowns:
                 if time.time() - self.channel_cooldowns[channel_id] < settings["cooldown_seconds"]: 
-                    should_respond = False # Cancel the response if on cooldown
+                    should_respond = False 
 
         # --- EXECUTE RESPONSE ---
         if should_respond:
@@ -310,7 +304,11 @@ class Chat(commands.Cog):
                 if (settings.get("brain_mode") == "llm" or "llama" in settings.get("llm_model", "") or "hermes" in settings.get("llm_model", "")) and not use_gif:
                     chat_history = []
                     prev_msg_time = None
-                    async for msg in message.channel.history(limit=100): 
+                    async for msg in message.channel.history(limit=100):
+                        # EFFICIENCY FIX: Skip the message that triggered this, we will format it properly below so it's not duplicated
+                        if msg.id == message.id:
+                            continue
+                            
                         if msg.content.startswith("/") and not msg.attachments: continue
                         if prev_msg_time:
                             time_diff = prev_msg_time - msg.created_at
@@ -333,10 +331,21 @@ class Chat(commands.Cog):
                             if not clean_msg_content and not msg.attachments: continue 
                         chat_history.insert(0, {"role": role, "content": content_payload})
                     
+                    # Insert the trigger message correctly at the end of the history
+                    clean_trigger_content = re.sub(r'<@!?\d+>', '', message.content).strip()
+                    trigger_payload = []
+                    text_part = f"{message.author.display_name}: {clean_trigger_content if clean_trigger_content else 'sent an image'}"
+                    trigger_payload.append({"type": "text", "text": text_part})
+                    for att in message.attachments:
+                        if att.content_type and "image" in att.content_type:
+                            trigger_payload.append({"type": "image_url", "image_url": {"url": att.url}})
+                    chat_history.append({"role": "user", "content": trigger_payload})
+
                     user_memories = await self.db.get_memories(guild_id, message.author.id)
                     consolidated = await self.db.get_consolidated_memory(guild_id)
                     
                     dynamic_prompt = BASE_SECRET_PROMPT
+                    # FIX: Added safety check so it doesn't crash if consolidated is None
                     if consolidated and consolidated.get("summary"):
                         dynamic_prompt += f"\n\nCONTEXT OF SERVER CULTURE:\n{consolidated['summary']}\nUse this subtly."
                     if user_memories:
