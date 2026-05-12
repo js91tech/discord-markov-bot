@@ -1,6 +1,5 @@
 import os
 import sys
-import glob
 import discord
 from discord.ext import commands
 import threading
@@ -57,6 +56,9 @@ class MarkovLLMBot(commands.Bot):
 
     async def setup_hook(self):
         """Runs automatically before the bot connects to Discord."""
+        
+        # Capture event loop for cross-thread API access
+        api_module.bot_loop = asyncio.get_running_loop()
         
         print("Initializing Database...")
         self.db = Database()
