@@ -1,6 +1,6 @@
 DEFAULTS = {
     "response_chance": 0.05,
-    "cooldown_seconds": 15,               # CHANGED FROM 30 TO 15
+    "cooldown_seconds": 25,
     "min_messages_before_respond": 3,
     "markov_order": 2,
     "min_response_words": 4,
@@ -17,13 +17,13 @@ DEFAULTS = {
     "response_enabled": True,
     "random_reply_chance": 0.15,
     "random_mention_chance": 0.10,
-    "gif_chance": 0.10,
-    "reaction_chance": 0.08,
-    "brain_mode": "markov",
-    "llm_model": "meta-llama/llama-3-8b-instruct",
+    "gif_chance": 0.15,
+    "reaction_chance": 0.10,
+    "brain_mode": "llm",                                      # CHANGED: Default is now LLM
+    "llm_model": "nousresearch/hermes-3-llama-3.1-405b",     # CHANGED: Default is now Hermes 405B
     "llm_system_prompt": "HIDDEN",
-    "conversation_window_seconds": 300,    # NEW: How long after speaking the bot stays "engaged"
-    "indirect_reply_chance": 0.70         # NEW: 70% chance to reply to indirect responses during the window
+    "conversation_window_seconds": 80,
+    "indirect_reply_chance": 0.30
 }
 
 VALIDATORS = {
