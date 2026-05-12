@@ -1,66 +1,134 @@
-import threading
-import os
-from api import app, bot_instance as api_bot_instance
 import os
 import discord
 from discord.ext import commands
-from engine.database import Database
-from config.settings_manager import SettingsManager
-from cogs.chat import Chat
-from cogs.settings_cog import SettingsCog
-from keep_alive import keep_alive
+import threading
 import asyncio
-import aiohttp
 
-# Self-ping to keep Render awake
-async def self_ping():
-    await asyncio.sleep(60)
-    render_url = os.environ.get('RENDER_EXTERNAL_URL')
-    if render_url:
-        while True:
-            try:
-                async with aiohttp.ClientSession() as session:
-                    await session.get(render_url)
-            except:
-                pass
-            await asyncio.sleep(240)
+# Import your actual Database class
+from database import Database
 
+# Import the FastAPI app, the runner function, and the bot instance variable from api.py
+from api import app, run_api, bot_instance as api_bot_instance
+
+# --- SETTINGS MANAGER ---
+# This replaces the need for a separate config file. It interfaces directly 
+# with your Database class and provides the default settings your cogs expect.
+class SettingsManager:
+    def __init__(self, db):
+        self.db = db
+        self.defaults = {
+            "brain_mode": "llm",
+            "response_enabled": True,
+            "learning_enabled": True,
+            "markov_order": 2,
+            "min_response_words": 3,
+            "max_response_words": 25,
+            "cooldown_seconds": 10,
+            "ignored_channels": [],
+            "allowed_channels": [],
+            "ignored_users": [],
+            "learn_from_bots": False,
+            "trigger_on_mention": True,
+            "trigger_on_reply": True,
+            "conversation_window_seconds": 120,
+            "indirect_reply_chance": 0.40,
+            "reaction_chance": 0.05,
+            "random_reply_chance": 0.30,
+            "random_mention_chance": 0.10,
+            "gif_chance": 0.10,
+            "personality_prefix": "",
+            "llm_model": "meta-llama/llama-3-8b-instruct",
+            "response_chance": 0.15 # Added for the chattiness command
+        }
+
+    async def get_settings(self, guild_id):
+        settings = await self.db.get_settings(guild_id)
+        if not settings:
+            return self.defaults.copy()
+        
+        # Ensure all default keys exist (in case you add new features later)
+        full_settings = self.defaults.copy()
+        full_settings.update(settings)
+        return full_settings
+
+    async def set_setting(self, guild_id, key, value):
+        settings = await self.get_settings(guild_id)
+        settings[key] = value
+        await self.db.save_settings(guild_id, settings)
+
+    async def update_settings(self, guild_id, update_data):
+        """Used by the FastAPI dashboard to update multiple settings at once"""
+        settings = await self.get_settings(guild_id)
+        settings.update(update_data)
+        await self.db.save_settings(guild_id, settings)
+
+    async def reset_all(self, guild_id):
+        """Used by the /botsettings resetdata command"""
+        await self.db.save_settings(guild_id, self.defaults.copy())
+
+
+# --- BOT INTENTS ---
+# Make sure to enable these in the Discord Developer Portal under the "Bot" tab
 intents = discord.Intents.default()
-intents.message_content = True
-intents.guild_messages = True
-intents.members = True
+intents.message_content = True  # REQUIRED: To read what users say
+intents.members = True          # REQUIRED: To track engagement and user names
 
-db = Database()
-settings_manager = SettingsManager(db)
+# --- BOT CLASS ---
+class MarkovLLMBot(commands.Bot):
+    def __init__(self):
+        super().__init__(
+            command_prefix="/",  # Fallback prefix, though you're using slash commands
+            intents=intents
+        )
+        # Initialize attributes that cogs will attach to
+        self.db = None
+        self.settings_manager = None
 
-bot = commands.Bot(command_prefix="!", intents=intents)
-
-@bot.event
-async def on_ready():
-    await db.init()
-    await settings_manager.load_settings()
-    
-    try:
-        synced = await bot.tree.sync()
-        print(f"Synced {len(synced)} command(s)")
-    except Exception as e:
-        print(f"Failed to sync commands: {e}")
+    async def setup_hook(self):
+        """
+        This runs automatically before the bot connects to Discord.
+        It's the best place to initialize database connections and load cogs.
+        """
         
-    print(f"Logged in as {bot.user} (ID: {bot.user.id})")
-    print("Bot is ready to learn and chat!")
-
-async def main():
-    keep_alive() # Start the web server
-    asyncio.create_task(self_ping()) # Start self-ping
-    
-    async with bot:
-        await bot.add_cog(Chat(bot, db, settings_manager))
-        await bot.add_cog(SettingsCog(bot, db, settings_manager))
+        # --- DATABASE & SETTINGS INITIALIZATION ---
+        print("Initializing Database...")
+        self.db = Database()
+        await self.db.init() # Connects to SQLite and creates tables
         
-        token = os.getenv("DISCORD_BOT_TOKEN")
-        if not token:
-            raise ValueError("DISCORD_BOT_TOKEN environment variable not set!")
-        await bot.start(token)
+        print("Initializing Settings Manager...")
+        self.settings_manager = SettingsManager(self.db)
 
-if __name__ == "__main__":
-    asyncio.run(main())
+        # --- LOAD COGS ---
+        print("Loading Cogs...")
+        # Loads the chat cog you just fixed
+        await self.load_extension("cogs.chat")
+        # Loads the settings cog you provided
+        await self.load_extension("cogs.settings")
+        # If you have other cogs (e.g., cogs.admin), load them here too
+
+    async def on_ready(self):
+        """
+        This runs when the bot successfully connects to Discord.
+        """
+        print(f"Logged in as {self.user} (ID: {self.user.id})")
+        print("------")
+
+# --- INITIALIZE AND RUN ---
+
+# 1. Create the bot instance
+bot = MarkovLLMBot()
+
+# 2. Pass the bot instance to the API so the dashboard can access the database/settings
+api_bot_instance = bot
+
+# 3. Start the FastAPI server in a background thread
+# Render requires the app to bind to the PORT environment variable
+print("Starting API dashboard thread...")
+threading.Thread(target=run_api, daemon=True).start()
+
+# 4. Run the Discord Bot
+TOKEN = os.getenv("DISCORD_TOKEN")
+if not TOKEN:
+    print("CRITICAL ERROR: DISCORD_TOKEN environment variable is missing!")
+else:
+    bot.run(TOKEN)
