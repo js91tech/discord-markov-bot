@@ -37,7 +37,8 @@ if not os.path.exists(os.path.join(CURRENT_DIR, 'config', 'settings_manager.py')
 from engine.database import Database
 from config.settings_manager import SettingsManager
 from config.default_settings import DEFAULTS
-from api import app, run_api, bot_instance as api_bot_instance
+import api as api_module
+from api import app, run_api
 
 # --- BOT INTENTS ---
 intents = discord.Intents.default()
@@ -66,7 +67,7 @@ class MarkovLLMBot(commands.Bot):
 
         print("Loading Cogs...")
         await self.load_extension("cogs.chat")
-        await self.load_extension("cogs.settings")
+        await self.load_extension("cogs.settings_cog")
 
     async def on_ready(self):
         """Runs when the bot successfully connects to Discord."""
@@ -76,7 +77,7 @@ class MarkovLLMBot(commands.Bot):
 # --- INITIALIZE AND RUN ---
 
 bot = MarkovLLMBot()
-api_bot_instance = bot
+api_module.bot_instance = bot  # FIX: update the actual module-level variable
 
 print("Starting API dashboard thread...")
 threading.Thread(target=run_api, daemon=True).start()
