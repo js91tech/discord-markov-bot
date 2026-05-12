@@ -3,24 +3,27 @@ import os
 
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
 
-async def generate_llm_response(system_prompt, chat_history):
+async def generate_llm_response(system_prompt, chat_history, model_name=None):
     """Sends the context to OpenRouter and gets a coherent response."""
     if not OPENROUTER_API_KEY:
         print("ERROR: OPENROUTER_API_KEY is missing from environment variables!")
         return None
-    
-    # Format the messages for the API
+
+    # Fallback model if none specified
+    if not model_name:
+        # Legacy: check if old code passed model in first message
+        if chat_history and "model" in chat_history[0]:
+            model_name = chat_history[0]["model"]
+            chat_history = chat_history[1:]  # strip it out
+        else:
+            model_name = "meta-llama/llama-3-8b-instruct"
+
+    # Format the messages for the API — skip any legacy model keys
     messages = [{"role": "system", "content": system_prompt}]
     for msg in chat_history:
-        # The first item in chat_history might contain the model info, skip it for the API payload
-        if "model" in msg: 
+        if "model" in msg:
             continue
         messages.append(msg)
-
-    # Extract the model from the settings (passed in the first message of chat_history by chat.py)
-    model_name = "meta-llama/llama-3-8b-instruct" # Fallback
-    if chat_history and "model" in chat_history[0]:
-        model_name = chat_history[0]["model"]
 
     url = "https://openrouter.ai/api/v1/chat/completions"
     headers = {
