@@ -1,3 +1,6 @@
+import threading
+import os
+from api import app, bot_instance as api_bot_instance
 import os
 import discord
 from discord.ext import commands
