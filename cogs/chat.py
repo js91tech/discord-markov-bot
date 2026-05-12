@@ -1,4 +1,4 @@
-import os # NEW: Added for Environment Variables
+import os
 import discord
 from discord.ext import commands, tasks
 import random
@@ -21,6 +21,18 @@ BASE_SECRET_PROMPT = (
     "Keep responses between 2 and 4 sentences max. Be smart, but always a smart-ass about it."
 )
 
+# SMART-ASS FALLBACK QUOTES
+FALLBACK_QUOTES = [
+    "i'm just here for the chaos honestly",
+    "did i miss something or is this just the usual nonsense",
+    "my brain cells are buffering please hold",
+    "that's cute that you think i care",
+    "anyone else feel like we're just delaying the inevitable",
+    "i'd respond but i'm too busy judging everyone silently",
+    "this is like watching a car crash in slow motion",
+    "sure let's go with that"
+]
+
 class Chat(commands.Cog):
     def __init__(self, bot, db, settings_manager):
         self.bot = bot
@@ -42,7 +54,6 @@ class Chat(commands.Cog):
         self.proactive_loop.cancel()
         self.memory_consolidation_loop.cancel()
 
-    # --- SHOWER THOUGHT LOOP ---
     @tasks.loop(minutes=90)
     async def proactive_loop(self):
         await self.bot.wait_until_ready()
@@ -71,11 +82,7 @@ class Chat(commands.Cog):
                 else:
                     chat_history.insert(0, {"role": "user", "content": f"{msg.author.display_name}: {clean_msg_content}"})
             if len(chat_history) < 10: continue 
-            prompt = (
-                "You just walked into the room and saw this conversation. You don't need to reply directly, "
-                "but if a random thought, a continuation of a joke, or a casual observation pops into your head based on the topic, say it. "
-                "If you have nothing interesting to add, respond with exactly the word: NO_THOUGHT"
-            )
+            prompt = "You just walked into the room and saw this conversation. You don't need to reply directly, but if a random thought pops into your head, say it. If nothing, say NO_THOUGHT"
             chat_history.insert(0, {"role": "system", "content": prompt, "model": settings.get("llm_model", "meta-llama/llama-3-8b-instruct")})
             response = await generate_llm_response(prompt, chat_history)
             if response and "NO_THOUGHT" not in response.upper():
@@ -85,7 +92,6 @@ class Chat(commands.Cog):
                     await target_channel.send(sanitize_message(response))
                 except: pass
 
-    # --- MEMORY CONSOLIDATION LOOP ---
     @tasks.loop(hours=24)
     async def memory_consolidation_loop(self):
         await self.bot.wait_until_ready()
@@ -109,16 +115,11 @@ class Chat(commands.Cog):
                 else:
                     chat_history.insert(0, {"role": "user", "content": f"{msg.author.display_name}: {clean_msg_content}"})
             if len(chat_history) < 50: continue 
-            prompt = (
-                "You are a memory archiver for a Discord bot. Summarize the inside jokes, drama, key facts, "
-                "and user dynamics from this chat log. Keep it under 500 words. Focus on things a new person "
-                "joining would need to know to understand the server's culture and recent events."
-            )
+            prompt = "You are a memory archiver for a Discord bot. Summarize the inside jokes, drama, key facts, and user dynamics from this chat log. Keep it under 500 words."
             chat_history.insert(0, {"role": "system", "content": prompt, "model": settings.get("llm_model", "meta-llama/llama-3-8b-instruct")})
             summary = await generate_llm_response(prompt, chat_history)
             if summary:
                 await self.db.save_consolidated_memory(guild.id, {"summary": summary, "timestamp": time.time()})
-                print(f"Consolidated memory updated for guild {guild.id}")
 
     async def get_chain(self, guild_id, order):
         if guild_id not in self.chains:
@@ -164,11 +165,11 @@ class Chat(commands.Cog):
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
-        # --- OWNER DM PROXY (Puppet Mode) ---
-        # If the message is a DM and from the bot owner, speak in the target channel
+        # --- OWNER DM PROXY ---
+        # CRITICAL FIX: We must check if it's a DM FIRST, handle it, and RETURN. 
+        # Otherwise, normal server messages get killed here too!
         if isinstance(message.channel, discord.DMChannel):
             owner_id = int(os.getenv("OWNER_USER_ID", "0"))
-            # Check if the author is the owner and they actually typed something
             if owner_id != 0 and message.author.id == owner_id and message.content:
                 target_channel_id = int(os.getenv("OWNER_TARGET_CHANNEL_ID", "0"))
                 if target_channel_id != 0:
@@ -179,13 +180,9 @@ class Chat(commands.Cog):
                             await message.author.send("✅ Spoke in server.")
                         except discord.errors.HTTPException as e:
                             await message.author.send(f"❌ Failed to send: {e}")
-                    else:
-                        await message.author.send("❌ Target channel not found.")
-                else:
-                    await message.author.send("❌ OWNER_TARGET_CHANNEL_ID not set in Render.")
-            return # Stop processing for all DMs
+            return # Stop processing. No one else can DM the bot.
         
-        # Original logic starts here
+        # --- NORMAL SERVER LOGIC ---
         if message.guild is None or message.author == self.bot.user: return
 
         guild_id = message.guild.id
@@ -232,8 +229,10 @@ class Chat(commands.Cog):
 
         if is_mentioned and settings["trigger_on_mention"]: 
             should_respond = True
+            print(f"[{guild_id}] Triggered by mention.")
         elif is_reply_to_bot and settings["trigger_on_reply"]: 
             should_respond = True
+            print(f"[{guild_id}] Triggered by reply.")
         elif not should_respond:
             window_seconds = settings.get("conversation_window_seconds", 120)
             indirect_chance = settings.get("indirect_reply_chance", 0.40)
@@ -244,14 +243,24 @@ class Chat(commands.Cog):
                     chance = indirect_chance * 2.0
                 if random.random() < chance:
                     should_respond = True
+                    print(f"[{guild_id}] Triggered by engagement window ({chance*100}%).")
+                    
         if not should_respond:
             effective_chance = settings["response_chance"] * vibe_multiplier
             if random.random() < effective_chance:
                 if channel_id in self.channel_cooldowns:
-                    if time.time() - self.channel_cooldowns[channel_id] < settings["cooldown_seconds"]: should_respond = False
-                    elif self.channel_counters[channel_id] < settings["min_messages_before_respond"]: should_respond = False
-                    else: should_respond = True
-                else: should_respond = True
+                    if time.time() - self.channel_cooldowns[channel_id] < settings["cooldown_seconds"]: 
+                        should_respond = False
+                        print(f"[{guild_id}] Wanted to chime in, but on cooldown.")
+                    elif self.channel_counters[channel_id] < settings["min_messages_before_respond"]: 
+                        should_respond = False
+                        print(f"[{guild_id}] Wanted to chime in, but not enough messages since last speak.")
+                else: 
+                    should_respond = True
+                    print(f"[{guild_id}] Triggered randomly (no cooldown).")
+                    
+                if should_respond:
+                    print(f"[{guild_id}] Triggered randomly ({effective_chance*100}%).")
 
         if should_respond:
             if random.random() < settings["reaction_chance"]:
@@ -300,10 +309,10 @@ class Chat(commands.Cog):
                     
                     dynamic_prompt = BASE_SECRET_PROMPT
                     if consolidated and consolidated.get("summary"):
-                        dynamic_prompt += f"\n\nCONTEXT OF SERVER CULTURE (Long-term memories):\n{consolidated['summary']}\nUse this context subtly to understand inside jokes."
+                        dynamic_prompt += f"\n\nCONTEXT OF SERVER CULTURE:\n{consolidated['summary']}\nUse this subtly."
                     if user_memories:
                         memory_str = "\n".join([f"- {m}" for m in user_memories])
-                        dynamic_prompt += f"\n\nPermanent memories you have about {message.author.display_name}:\n{memory_str}\nAct subtly aware of these memories, and use them to be even more of a smart-ass if it's funny."
+                        dynamic_prompt += f"\n\nPermanent memories about {message.author.display_name}:\n{memory_str}\nBe a smart-ass about these."
 
                     chat_history.insert(0, {"role": "system", "content": dynamic_prompt, "model": settings.get("llm_model", "meta-llama/llama-3-8b-instruct")})
                     
@@ -313,10 +322,13 @@ class Chat(commands.Cog):
                         llm_response = re.sub(r'<@!?\d+>', '', llm_response).strip()
                         if llm_response.lower().strip() in self.bot_recent_messages.get(guild_id, []):
                             llm_response = None
+                            print(f"[{guild_id}] LLM response was repetitive, discarding.")
                         if llm_response:
                             base_text = sanitize_message(llm_response)
                             final_content = f"{message.author.mention} {base_text}" if use_mention else base_text
                         else: final_content = None 
+                    else:
+                        print(f"[{guild_id}] LLM returned None (API fail/timeout).")
                             
                     if not final_content:
                         chain = await self.get_chain(guild_id, settings["markov_order"])
@@ -325,7 +337,11 @@ class Chat(commands.Cog):
                             base_text = f"{settings['personality_prefix']} {response}".strip()
                             base_text = sanitize_message(base_text)
                             final_content = f"{message.author.mention} {base_text}" if use_mention else base_text
-                else:
+                        else:
+                            print(f"[{guild_id}] Markov also failed. Using fallback quote.")
+                            final_content = random.choice(FALLBACK_QUOTES)
+
+                else: # Markov / Gif mode
                     if use_gif:
                         search_words = [w for w in message.content.lower().split() if len(w) > 3]
                         search_query = random.choice(search_words) if search_words else "meme"
@@ -342,6 +358,10 @@ class Chat(commands.Cog):
                             base_text = f"{prefix} {response}".strip()
                             base_text = sanitize_message(base_text)
                             final_content = f"{message.author.mention} {base_text}" if use_mention else base_text
+                        else:
+                            print(f"[{guild_id}] Markov failed in Markov mode. Using fallback quote.")
+                            final_content = random.choice(FALLBACK_QUOTES)
+
                 if final_content:
                     try:
                         await message.channel.send(final_content, reference=reference)
@@ -349,8 +369,9 @@ class Chat(commands.Cog):
                         self.channel_counters[channel_id] = 0
                         await self.db.increment_stat(guild_id, "messages_sent")
                         self.last_bot_engagement[channel_id] = {"time": time.time(), "user_id": message.author.id}
+                        print(f"[{guild_id}] Message sent successfully.")
                     except discord.errors.HTTPException as e:
-                        print(f"Error sending message: {e}")
+                        print(f"[{guild_id}] Error sending message: {e}")
 
 async def setup(bot):
     await bot.add_cog(Chat(bot, bot.db, bot.settings_manager))
