@@ -81,8 +81,13 @@ class MarkovLLMBot(commands.Bot):
 bot = MarkovLLMBot()
 api_module.bot_instance = bot  # FIX: update the actual module-level variable
 
-print("Starting API dashboard thread...")
-threading.Thread(target=run_api, daemon=True).start()
+# Only start the API dashboard on a local port — NOT the Render PORT
+# Binding to Render's PORT triggers a restart loop (Render thinks it's a web service)
+if not os.environ.get("RENDER"):
+    print("Starting API dashboard thread...")
+    threading.Thread(target=run_api, daemon=True).start()
+else:
+    print("Render detected — skipping API dashboard (worker mode)")
 
 TOKEN = os.getenv("DISCORD_TOKEN")
 if not TOKEN:
