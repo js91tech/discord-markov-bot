@@ -94,7 +94,11 @@ class Database:
         params = (guild_id, json.dumps(settings_dict))
         await self.queue.put((sql, params))
 
+    VALID_STAT_COLUMNS = {"messages_learned", "messages_sent"}
+
     async def increment_stat(self, guild_id, column, amount=1):
+        if column not in self.VALID_STAT_COLUMNS:
+            raise ValueError(f"Invalid stat column: {column}")
         sql = f"INSERT INTO stats (guild_id, {column}) VALUES (?, ?) ON CONFLICT(guild_id) DO UPDATE SET {column} = {column} + ?"
         params = (guild_id, amount, amount)
         await self.queue.put((sql, params))
