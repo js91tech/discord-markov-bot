@@ -1,3 +1,4 @@
+import os # NEW: Added for Environment Variables
 import discord
 from discord.ext import commands, tasks
 import random
@@ -5,7 +6,7 @@ import time
 import re 
 from collections import deque
 from datetime import timedelta
-from discord.utils import utcnow # LINT FIX: Added missing import
+from discord.utils import utcnow
 from engine.markov import MarkovChain
 from utils import sanitize_message, search_gif
 from llm import generate_llm_response
@@ -41,16 +42,14 @@ class Chat(commands.Cog):
         self.proactive_loop.cancel()
         self.memory_consolidation_loop.cancel()
 
-    # --- SHOWER THOUGHT LOOP (Proactive Messaging) ---
+    # --- SHOWER THOUGHT LOOP ---
     @tasks.loop(minutes=90)
     async def proactive_loop(self):
         await self.bot.wait_until_ready()
         for guild in self.bot.guilds:
             if random.random() > 0.16: continue 
-            
             settings = await self.settings_manager.get_settings(guild.id)
             if settings.get("brain_mode") != "llm" or not settings.get("response_enabled"): continue
-            
             target_channel = None
             allowed = settings.get("allowed_channels", [])
             if allowed:
@@ -58,15 +57,11 @@ class Chat(commands.Cog):
             else:
                 text_channels = [c for c in guild.text_channels if c.permissions_for(guild.me).send_messages]
                 if text_channels: target_channel = random.choice(text_channels)
-                
             if not target_channel: continue
-            
             try:
                 async for last_msg in target_channel.history(limit=1):
-                    if (utcnow() - last_msg.created_at).total_seconds() > 7200: 
-                        continue 
+                    if (utcnow() - last_msg.created_at).total_seconds() > 7200: continue 
             except: continue
-            
             chat_history = []
             async for msg in target_channel.history(limit=50):
                 if msg.content.startswith("/") and not msg.attachments: continue
@@ -75,16 +70,13 @@ class Chat(commands.Cog):
                     chat_history.insert(0, {"role": "assistant", "content": clean_msg_content})
                 else:
                     chat_history.insert(0, {"role": "user", "content": f"{msg.author.display_name}: {clean_msg_content}"})
-            
             if len(chat_history) < 10: continue 
-            
             prompt = (
                 "You just walked into the room and saw this conversation. You don't need to reply directly, "
                 "but if a random thought, a continuation of a joke, or a casual observation pops into your head based on the topic, say it. "
                 "If you have nothing interesting to add, respond with exactly the word: NO_THOUGHT"
             )
             chat_history.insert(0, {"role": "system", "content": prompt, "model": settings.get("llm_model", "meta-llama/llama-3-8b-instruct")})
-            
             response = await generate_llm_response(prompt, chat_history)
             if response and "NO_THOUGHT" not in response.upper():
                 response = re.sub(r'^.{0,30}?:\s*', '', response).strip()
@@ -93,14 +85,13 @@ class Chat(commands.Cog):
                     await target_channel.send(sanitize_message(response))
                 except: pass
 
-    # --- MEMORY CONSOLIDATION LOOP (Infinite Long-Term Memory) ---
+    # --- MEMORY CONSOLIDATION LOOP ---
     @tasks.loop(hours=24)
     async def memory_consolidation_loop(self):
         await self.bot.wait_until_ready()
         for guild in self.bot.guilds:
             settings = await self.settings_manager.get_settings(guild.id)
             if settings.get("brain_mode") != "llm": continue
-            
             target_channel = None
             allowed = settings.get("allowed_channels", [])
             if allowed:
@@ -108,9 +99,7 @@ class Chat(commands.Cog):
             else:
                 text_channels = [c for c in guild.text_channels if c.permissions_for(guild.me).read_message_history]
                 if text_channels: target_channel = text_channels[0]
-                
             if not target_channel: continue
-            
             chat_history = []
             async for msg in target_channel.history(limit=500):
                 if msg.content.startswith("/"): continue
@@ -119,16 +108,13 @@ class Chat(commands.Cog):
                     chat_history.insert(0, {"role": "assistant", "content": clean_msg_content})
                 else:
                     chat_history.insert(0, {"role": "user", "content": f"{msg.author.display_name}: {clean_msg_content}"})
-            
             if len(chat_history) < 50: continue 
-            
             prompt = (
                 "You are a memory archiver for a Discord bot. Summarize the inside jokes, drama, key facts, "
                 "and user dynamics from this chat log. Keep it under 500 words. Focus on things a new person "
                 "joining would need to know to understand the server's culture and recent events."
             )
             chat_history.insert(0, {"role": "system", "content": prompt, "model": settings.get("llm_model", "meta-llama/llama-3-8b-instruct")})
-            
             summary = await generate_llm_response(prompt, chat_history)
             if summary:
                 await self.db.save_consolidated_memory(guild.id, {"summary": summary, "timestamp": time.time()})
@@ -178,6 +164,28 @@ class Chat(commands.Cog):
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
+        # --- OWNER DM PROXY (Puppet Mode) ---
+        # If the message is a DM and from the bot owner, speak in the target channel
+        if isinstance(message.channel, discord.DMChannel):
+            owner_id = int(os.getenv("OWNER_USER_ID", "0"))
+            # Check if the author is the owner and they actually typed something
+            if owner_id != 0 and message.author.id == owner_id and message.content:
+                target_channel_id = int(os.getenv("OWNER_TARGET_CHANNEL_ID", "0"))
+                if target_channel_id != 0:
+                    target_channel = self.bot.get_channel(target_channel_id)
+                    if target_channel:
+                        try:
+                            await target_channel.send(message.content)
+                            await message.author.send("✅ Spoke in server.")
+                        except discord.errors.HTTPException as e:
+                            await message.author.send(f"❌ Failed to send: {e}")
+                    else:
+                        await message.author.send("❌ Target channel not found.")
+                else:
+                    await message.author.send("❌ OWNER_TARGET_CHANNEL_ID not set in Render.")
+            return # Stop processing for all DMs
+        
+        # Original logic starts here
         if message.guild is None or message.author == self.bot.user: return
 
         guild_id = message.guild.id
@@ -264,8 +272,7 @@ class Chat(commands.Cog):
                 if (settings.get("brain_mode") == "llm" or "llama" in settings.get("llm_model", "") or "hermes" in settings.get("llm_model", "")) and not use_gif:
                     chat_history = []
                     prev_msg_time = None
-                    
-                    async for msg in message.channel.history(limit=100): # LINT FIX: Reduced limit for efficiency with consolidation
+                    async for msg in message.channel.history(limit=100): 
                         if msg.content.startswith("/") and not msg.attachments: continue
                         if prev_msg_time:
                             time_diff = prev_msg_time - msg.created_at
@@ -280,7 +287,6 @@ class Chat(commands.Cog):
                         else:
                             role = "user"
                             content_payload = []
-                            # LINT FIX: Ensure images always have a text fallback for the API
                             text_part = f"{msg.author.display_name}: {clean_msg_content if clean_msg_content else 'sent an image'}"
                             content_payload.append({"type": "text", "text": text_part})
                             for att in msg.attachments:
