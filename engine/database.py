@@ -33,6 +33,12 @@ class Database:
         await self.conn.execute("""CREATE TABLE IF NOT EXISTS consolidated_memories (
                                     guild_id INTEGER PRIMARY KEY, 
                                     summary_json TEXT)""")
+        await self.conn.execute("""CREATE TABLE IF NOT EXISTS reminders (
+                                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                                    user_id INTEGER, 
+                                    channel_id INTEGER,
+                                    message TEXT,
+                                    trigger_time REAL)""")
         await self.conn.commit()
         self._worker_task = asyncio.create_task(self._write_worker())
 
@@ -100,12 +106,4 @@ class Database:
     async def forget_memories(self, guild_id, user_id):
         await self.queue.put(("DELETE FROM memories WHERE guild_id = ? AND user_id = ?", (guild_id, user_id)))
 
-    async def get_consolidated_memory(self, guild_id):
-        cursor = await self.conn.execute("SELECT summary_json FROM consolidated_memories WHERE guild_id = ?", (guild_id,))
-        row = await cursor.fetchone()
-        return json.loads(row[0]) if row else None
-
-    async def save_consolidated_memory(self, guild_id, summary_dict):
-        sql = "INSERT OR REPLACE INTO consolidated_memories (guild_id, summary_json) VALUES (?, ?)"
-        params = (guild_id, json.dumps(summary_dict))
-        await self.queue.put((sql, params))
+    async def get_consolidated_memory(self, guild
