@@ -7,39 +7,18 @@ import asyncio
 # Import your actual Database class
 from database import Database
 
+# Import the centralized defaults
+from config.default_settings import DEFAULTS
+
 # Import the FastAPI app, the runner function, and the bot instance variable from api.py
 from api import app, run_api, bot_instance as api_bot_instance
 
 # --- SETTINGS MANAGER ---
-# This replaces the need for a separate config file. It interfaces directly 
-# with your Database class and provides the default settings your cogs expect.
 class SettingsManager:
     def __init__(self, db):
         self.db = db
-        self.defaults = {
-            "brain_mode": "llm",
-            "response_enabled": True,
-            "learning_enabled": True,
-            "markov_order": 2,
-            "min_response_words": 3,
-            "max_response_words": 25,
-            "cooldown_seconds": 10,
-            "ignored_channels": [],
-            "allowed_channels": [],
-            "ignored_users": [],
-            "learn_from_bots": False,
-            "trigger_on_mention": True,
-            "trigger_on_reply": True,
-            "conversation_window_seconds": 120,
-            "indirect_reply_chance": 0.40,
-            "reaction_chance": 0.05,
-            "random_reply_chance": 0.30,
-            "random_mention_chance": 0.10,
-            "gif_chance": 0.10,
-            "personality_prefix": "",
-            "llm_model": "meta-llama/llama-3-8b-instruct",
-            "response_chance": 0.15 # Added for the chattiness command
-        }
+        # Use the imported DEFAULTS instead of hardcoding them here
+        self.defaults = DEFAULTS
 
     async def get_settings(self, guild_id):
         settings = await self.db.get_settings(guild_id)
