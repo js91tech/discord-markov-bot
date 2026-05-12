@@ -3,3 +3,6 @@ aiohttp==3.9.1
 aiosqlite==0.20.0
 flask==3.0.0
 werkzeug==3.0.1
+fastapi
+uvicorn
+pydantic
