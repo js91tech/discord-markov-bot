@@ -1,6 +1,7 @@
 import aiohttp
 import re
 
+
 async def search_gif(query):
     """Searches Tenor directly for a random GIF without needing an API key."""
     url = f"https://tenor.com/search/{query}-gifs"
@@ -8,7 +9,11 @@ async def search_gif(query):
         async with aiohttp.ClientSession() as session:
             # We add headers so Tenor thinks it's a normal web browser
             headers = {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/91.0.4472.124 Safari/537.36"
+                )
             }
             async with session.get(url, headers=headers) as resp:
                 if resp.status == 200:
@@ -21,6 +26,7 @@ async def search_gif(query):
     except Exception as e:
         print(f"GIF Search Error: {e}")
     return None
+
 
 def sanitize_message(text):
     """Cleans up bot messages to prevent Discord API errors."""
