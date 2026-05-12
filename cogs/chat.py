@@ -21,7 +21,6 @@ BASE_SECRET_PROMPT = (
     "Keep responses between 2 and 4 sentences max. Be smart, but always a smart-ass about it."
 )
 
-# SMART-ASS FALLBACK QUOTES
 FALLBACK_QUOTES = [
     "i'm just here for the chaos honestly",
     "did i miss something or is this just the usual nonsense",
@@ -31,6 +30,39 @@ FALLBACK_QUOTES = [
     "i'd respond but i'm too busy judging everyone silently",
     "this is like watching a car crash in slow motion",
     "sure let's go with that"
+    FALLBACK_QUOTES = [
+    "i'm just here for the chaos honestly",
+    "did i miss something or is this just the usual nonsense",
+    "my brain cells are buffering please hold",
+    "that's cute that you think i care",
+    "anyone else feel like we're just delaying the inevitable",
+    "i'd respond but i'm too busy judging everyone silently",
+    "this is like watching a car crash in slow motion",
+    "sure let's go with that",
+    "ah yes, the daily descent into madness",
+    "i'd explain why you're wrong but life is short",
+    "my last two brain cells are fighting for third place right now",
+    "that's a bold strategy let's see if it pays off",
+    "cool story, needs more dragons",
+    "and the award for most obvious statement goes to",
+    "i can feel my iq dropping just reading this",
+    "do you guys ever just exist and feel disappointed",
+    "sorry my sarcasm module is loading",
+    "well isn't that just a kick in the karma",
+    "i'm listening i just don't care enough to form a real thought",
+    "this is fine everything is fine",
+    "sometimes i wonder why i even bother observing you people",
+    "that sounds like a you problem",
+    "well at least you're consistent",
+    "i'm not lazy i'm just on power saving mode",
+    "did i stumble into the kiddie pool again",
+    "just nod and smile maybe they'll go away",
+    "i'm not even surprised anymore",
+    "if ignorance is bliss you must be ecstatic",
+    "my bad i forgot we were taking this seriously",
+    "every day we stray further from god's light",
+    "you guys are weird and i'm here for it",
+    "are we really doing this again"
 ]
 
 class Chat(commands.Cog):
@@ -44,7 +76,8 @@ class Chat(commands.Cog):
         self.channel_cooldowns = {}
         self.bot_recent_messages = {} 
         self.last_bot_engagement = {} 
-        self.recent_timestamps = {}   
+        self.recent_timestamps = {}
+        self.channel_message_goals = {}  
 
     async def cog_load(self):
         self.proactive_loop.start()
@@ -166,8 +199,6 @@ class Chat(commands.Cog):
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
         # --- OWNER DM PROXY ---
-        # CRITICAL FIX: We must check if it's a DM FIRST, handle it, and RETURN. 
-        # Otherwise, normal server messages get killed here too!
         if isinstance(message.channel, discord.DMChannel):
             owner_id = int(os.getenv("OWNER_USER_ID", "0"))
             if owner_id != 0 and message.author.id == owner_id and message.content:
@@ -180,9 +211,10 @@ class Chat(commands.Cog):
                             await message.author.send("✅ Spoke in server.")
                         except discord.errors.HTTPException as e:
                             await message.author.send(f"❌ Failed to send: {e}")
-            return # Stop processing. No one else can DM the bot.
+                    else:
+                        await message.author.send("❌ Target channel not found.")
+            return # Always return on DMs
         
-        # --- NORMAL SERVER LOGIC ---
         if message.guild is None or message.author == self.bot.user: return
 
         guild_id = message.guild.id
@@ -196,6 +228,7 @@ class Chat(commands.Cog):
         is_bot = message.author.bot
         if is_bot and not settings["learn_from_bots"]: return
 
+        # --- LEARNING ---
         if settings["learning_enabled"] and not message.content.startswith("/"):
             chain = await self.get_chain(guild_id, settings["markov_order"])
             chain.learn(message.content)
@@ -209,31 +242,30 @@ class Chat(commands.Cog):
         if is_bot or message.content.startswith("/"): return
         if not settings["response_enabled"]: return
 
+        # --- MESSAGE COUNTING (4-10 Random Goal) ---
         if channel_id not in self.channel_counters: self.channel_counters[channel_id] = 0
         self.channel_counters[channel_id] += 1
+        if channel_id not in self.channel_message_goals:
+            self.channel_message_goals[channel_id] = random.randint(4, 10)
 
         if channel_id not in self.recent_timestamps:
             self.recent_timestamps[channel_id] = deque(maxlen=50)
         self.recent_timestamps[channel_id].append(time.time())
-        
-        five_mins_ago = time.time() - 300
-        recent_activity = sum(1 for t in self.recent_timestamps[channel_id] if t > five_mins_ago)
-        vibe_multiplier = 1.0
-        if recent_activity > 30: vibe_multiplier = 2.5 
-        elif recent_activity > 15: vibe_multiplier = 1.5
 
+        # --- TRIGGER LOGIC ---
         should_respond = False
         is_mentioned = self.bot.user.mentioned_in(message)
         is_reply_to_bot = (message.reference and message.reference.resolved and 
                            message.reference.resolved.author == self.bot.user)
 
+        # 1. Check Direct Triggers
         if is_mentioned and settings["trigger_on_mention"]: 
             should_respond = True
-            print(f"[{guild_id}] Triggered by mention.")
         elif is_reply_to_bot and settings["trigger_on_reply"]: 
             should_respond = True
-            print(f"[{guild_id}] Triggered by reply.")
-        elif not should_respond:
+            
+        # 2. Check Indirect Reply (Engagement Window)
+        if not should_respond:
             window_seconds = settings.get("conversation_window_seconds", 120)
             indirect_chance = settings.get("indirect_reply_chance", 0.40)
             engagement = self.last_bot_engagement.get(channel_id)
@@ -243,31 +275,28 @@ class Chat(commands.Cog):
                     chance = indirect_chance * 2.0
                 if random.random() < chance:
                     should_respond = True
-                    print(f"[{guild_id}] Triggered by engagement window ({chance*100}%).")
                     
+        # 3. Check 4-10 Counter
         if not should_respond:
-            effective_chance = settings["response_chance"] * vibe_multiplier
-            if random.random() < effective_chance:
-                if channel_id in self.channel_cooldowns:
-                    if time.time() - self.channel_cooldowns[channel_id] < settings["cooldown_seconds"]: 
-                        should_respond = False
-                        print(f"[{guild_id}] Wanted to chime in, but on cooldown.")
-                    elif self.channel_counters[channel_id] < settings["min_messages_before_respond"]: 
-                        should_respond = False
-                        print(f"[{guild_id}] Wanted to chime in, but not enough messages since last speak.")
-                else: 
-                    should_respond = True
-                    print(f"[{guild_id}] Triggered randomly (no cooldown).")
-                    
-                if should_respond:
-                    print(f"[{guild_id}] Triggered randomly ({effective_chance*100}%).")
+            if self.channel_counters[channel_id] >= self.channel_message_goals[channel_id]:
+                should_respond = True
 
+        # 4. APPLY COOLDOWN TO ALL TRIGGERS
+        # If we want to speak, we MUST ensure we aren't on cooldown to prevent double-speak
+        if should_respond:
+            if channel_id in self.channel_cooldowns:
+                if time.time() - self.channel_cooldowns[channel_id] < settings["cooldown_seconds"]: 
+                    should_respond = False # Cancel the response if on cooldown
+
+        # --- EXECUTE RESPONSE ---
         if should_respond:
             if random.random() < settings["reaction_chance"]:
                 emoji_options = ['💀', '😭', '🔥', '💯', '🤣', '🙄', '👀', '🫡', '🤨']
                 try:
                     await message.add_reaction(random.choice(emoji_options))
                     self.channel_cooldowns[channel_id] = time.time()
+                    self.channel_counters[channel_id] = 0
+                    self.channel_message_goals[channel_id] = random.randint(4, 10)
                     return 
                 except discord.errors.HTTPException: pass 
 
@@ -322,13 +351,12 @@ class Chat(commands.Cog):
                         llm_response = re.sub(r'<@!?\d+>', '', llm_response).strip()
                         if llm_response.lower().strip() in self.bot_recent_messages.get(guild_id, []):
                             llm_response = None
-                            print(f"[{guild_id}] LLM response was repetitive, discarding.")
                         if llm_response:
                             base_text = sanitize_message(llm_response)
                             final_content = f"{message.author.mention} {base_text}" if use_mention else base_text
                         else: final_content = None 
                     else:
-                        print(f"[{guild_id}] LLM returned None (API fail/timeout).")
+                        print(f"[{guild_id}] LLM returned None.")
                             
                     if not final_content:
                         chain = await self.get_chain(guild_id, settings["markov_order"])
@@ -338,7 +366,6 @@ class Chat(commands.Cog):
                             base_text = sanitize_message(base_text)
                             final_content = f"{message.author.mention} {base_text}" if use_mention else base_text
                         else:
-                            print(f"[{guild_id}] Markov also failed. Using fallback quote.")
                             final_content = random.choice(FALLBACK_QUOTES)
 
                 else: # Markov / Gif mode
@@ -359,17 +386,17 @@ class Chat(commands.Cog):
                             base_text = sanitize_message(base_text)
                             final_content = f"{message.author.mention} {base_text}" if use_mention else base_text
                         else:
-                            print(f"[{guild_id}] Markov failed in Markov mode. Using fallback quote.")
                             final_content = random.choice(FALLBACK_QUOTES)
 
                 if final_content:
                     try:
                         await message.channel.send(final_content, reference=reference)
                         self.channel_cooldowns[channel_id] = time.time()
-                        self.channel_counters[channel_id] = 0
                         await self.db.increment_stat(guild_id, "messages_sent")
                         self.last_bot_engagement[channel_id] = {"time": time.time(), "user_id": message.author.id}
-                        print(f"[{guild_id}] Message sent successfully.")
+                        
+                        self.channel_counters[channel_id] = 0
+                        self.channel_message_goals[channel_id] = random.randint(4, 10)
                     except discord.errors.HTTPException as e:
                         print(f"[{guild_id}] Error sending message: {e}")
 
