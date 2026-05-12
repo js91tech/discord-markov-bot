@@ -4,8 +4,9 @@ from discord import app_commands
 from config.default_settings import DEFAULTS, VALIDATORS
 from engine.markov import MarkovChain
 from utils import sanitize_message
-from llm import generate_llm_response # CRITICAL LINT FIX: Added missing import
+from llm import generate_llm_response  # CRITICAL LINT FIX: Added missing import
 import json
+
 
 class SettingsCog(commands.Cog):
     def __init__(self, bot, db, settings_manager):
@@ -13,9 +14,14 @@ class SettingsCog(commands.Cog):
         self.db = db
         self.settings_manager = settings_manager
 
-    group = app_commands.Group(name="botsettings", description="Configure the bot", default_permissions=discord.Permissions(manage_guild=True))
+    group = app_commands.Group(
+        name="botsettings",
+        description="Configure the bot",
+        default_permissions=discord.Permissions(
+            manage_guild=True))
 
-    async def setting_autocomplete(self, interaction: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:
+    async def setting_autocomplete(self, interaction: discord.Interaction,
+                                   current: str) -> list[app_commands.Choice[str]]:
         keys = list(DEFAULTS.keys())
         return [app_commands.Choice(name=key, value=key) for key in keys if current.lower() in key.lower()][:25]
 
@@ -30,17 +36,22 @@ class SettingsCog(commands.Cog):
         if validator and not validator(value):
             await interaction.response.send_message(f"❌ Invalid value for `{key}`.", ephemeral=True)
             return
-        if isinstance(DEFAULTS[key], bool): parsed_val = str(value).lower() in ["true", "yes", "on"]
-        elif isinstance(DEFAULTS[key], int): parsed_val = int(value)
-        elif isinstance(DEFAULTS[key], float): parsed_val = float(value)
+        if isinstance(DEFAULTS[key], bool):
+            parsed_val = str(value).lower() in ["true", "yes", "on"]
+        elif isinstance(DEFAULTS[key], int):
+            parsed_val = int(value)
+        elif isinstance(DEFAULTS[key], float):
+            parsed_val = float(value)
         elif isinstance(DEFAULTS[key], list):
             try:
                 parsed_val = json.loads(value)
-                if not isinstance(parsed_val, list): raise ValueError
+                if not isinstance(parsed_val, list):
+                    raise ValueError
             except Exception:
                 await interaction.response.send_message("❌ List values must be a JSON array", ephemeral=True)
                 return
-        else: parsed_val = value
+        else:
+            parsed_val = value
         await self.settings_manager.set_setting(interaction.guild.id, key, parsed_val)
         await interaction.response.send_message(f"✅ Set `{key}` to `{parsed_val}`", ephemeral=True)
 
@@ -72,7 +83,10 @@ class SettingsCog(commands.Cog):
     async def chattiness(self, interaction: discord.Interaction, level: app_commands.Choice[int]):
         chance = round(level.value * 0.03, 2)
         await self.settings_manager.set_setting(interaction.guild.id, "response_chance", chance)
-        await interaction.response.send_message(f"🗣️ Chattiness set to **{level.name}**. Response chance is now {chance*100}%", ephemeral=True)
+        await interaction.response.send_message(
+            f"🗣️ Chattiness set to **{level.name}**. Response chance is now {chance * 100}%",
+            ephemeral=True,
+        )
 
     @group.command(name="mode", description="Switch between Markov (Free/Silly) and LLM (Cheap/Coherent)")
     @app_commands.describe(brain="Select the brain mode")
@@ -88,13 +102,19 @@ class SettingsCog(commands.Cog):
     @app_commands.describe(user="The user this fact is about", fact="The fact to remember")
     async def remember(self, interaction: discord.Interaction, user: discord.Member, fact: str):
         await self.db.add_memory(interaction.guild.id, user.id, fact)
-        await interaction.response.send_message(f"🧠 I'll remember that about {user.display_name}: {fact}", ephemeral=True)
+        await interaction.response.send_message(
+            f"🧠 I'll remember that about {user.display_name}: {fact}",
+            ephemeral=True,
+        )
 
     @group.command(name="forget", description="Make the bot forget all facts about a user")
     @app_commands.describe(user="The user to forget")
     async def forget(self, interaction: discord.Interaction, user: discord.Member):
         await self.db.forget_memories(interaction.guild.id, user.id)
-        await interaction.response.send_message(f"🧠 I've forgotten everything I knew about {user.display_name}.", ephemeral=True)
+        await interaction.response.send_message(
+            f"🧠 I've forgotten everything I knew about {user.display_name}.",
+            ephemeral=True,
+        )
 
     @group.command(name="roast", description="Roast a user based on their recent messages")
     @app_commands.describe(user="The user you want to roast")
@@ -103,15 +123,19 @@ class SettingsCog(commands.Cog):
             await interaction.response.send_message("I only roast humans! 🤖", ephemeral=True)
             return
         await interaction.response.defer(thinking=True)
-        
+
         user_msgs = []
         async for msg in interaction.channel.history(limit=500):
             if msg.author.id == user.id and not msg.content.startswith("/") and msg.content.strip():
                 user_msgs.insert(0, msg.content)
-                if len(user_msgs) >= 30: break
-                
+                if len(user_msgs) >= 30:
+                    break
+
         if len(user_msgs) < 5:
-            await interaction.followup.send(f"{user.display_name} hasn't said enough for me to roast them.", ephemeral=True)
+            await interaction.followup.send(
+                f"{user.display_name} hasn't said enough for me to roast them.",
+                ephemeral=True,
+            )
             return
 
         settings = await self.settings_manager.get_settings(interaction.guild.id)
@@ -120,10 +144,11 @@ class SettingsCog(commands.Cog):
             f"and deliver a devastating, witty roast based on what they talk about and how they type. "
             f"Keep it 2-4 sentences. Be savage but clever. DO NOT use @ symbols or names in your response."
         )
-        
+
         chat_history = [{"role": "user", "content": "\n".join(user_msgs)}]
-        chat_history.insert(0, {"role": "system", "content": roast_prompt, "model": settings.get("llm_model", "meta-llama/llama-3-8b-instruct")})
-        
+        chat_history.insert(0, {"role": "system", "content": roast_prompt,
+                            "model": settings.get("llm_model", "meta-llama/llama-3-8b-instruct")})
+
         response = await generate_llm_response(roast_prompt, chat_history)
         if response:
             await interaction.followup.send(f"🔥 **Roasting {user.display_name}:** {sanitize_message(response)}")
@@ -146,9 +171,13 @@ class SettingsCog(commands.Cog):
                     temp_chain.learn(msg.content)
                     exact_messages.add(msg.content.lower().strip())
                     messages_found += 1
-                    if messages_found >= 500: break
+                    if messages_found >= 500:
+                        break
             if messages_found < 5:
-                await interaction.followup.send(f"{user.display_name} hasn't talked enough here for me to mimic them!", ephemeral=True)
+                await interaction.followup.send(
+                    f"{user.display_name} hasn't talked enough here for me to mimic them!",
+                    ephemeral=True,
+                )
                 return
             response = None
             for _ in range(5):
@@ -159,7 +188,10 @@ class SettingsCog(commands.Cog):
             if response:
                 await interaction.followup.send(f"**{user.display_name}:** {sanitize_message(response)}")
             else:
-                await interaction.followup.send(f"I couldn't figure out how to mix up {user.display_name}'s words creatively!", ephemeral=True)
+                await interaction.followup.send(
+                    f"I couldn't figure out how to mix up {user.display_name}'s words creatively!",
+                    ephemeral=True,
+                )
         except Exception as e:
             await interaction.followup.send(f"❌ An error occurred while mimicking: {e}", ephemeral=True)
 
@@ -211,7 +243,11 @@ class SettingsCog(commands.Cog):
                 learned_count += 1
         await self.db.save_full_chain(guild_id, chain.to_db_dict())
         await self.db.increment_stat(guild_id, "messages_learned", learned_count)
-        await interaction.followup.send(f"🧠 Successfully loaded starter brain! Learned {learned_count} lines.", ephemeral=True)
+        await interaction.followup.send(
+            f"🧠 Successfully loaded starter brain! Learned {learned_count} lines.",
+            ephemeral=True,
+        )
+
 
 async def setup(bot):
     await bot.add_cog(SettingsCog(bot, bot.db, bot.settings_manager))
