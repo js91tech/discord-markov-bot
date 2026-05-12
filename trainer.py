@@ -1,11 +1,11 @@
 import asyncio
 import aiosqlite
 import json
-import re
 from engine.markov import MarkovChain
 
 DB_PATH = "data/bot.db"
 GUILD_ID = 1388136234827649116  # Set your Discord Server ID here
+
 
 async def train():
     if not GUILD_ID:
@@ -20,10 +20,10 @@ async def train():
         return
 
     print(f"Found {len(lines)} lines of text. Starting training...")
-    
+
     conn = await aiosqlite.connect(DB_PATH)
     chain = MarkovChain(order=2)
-    
+
     # Load existing data from DB so we don't overwrite what the bot already knows
     cursor = await conn.execute("SELECT key, value FROM markov WHERE guild_id = ?", (GUILD_ID,))
     rows = await cursor.fetchall()
@@ -33,7 +33,7 @@ async def train():
     # Learn the new lines
     for line in lines:
         clean_line = line.strip()
-        if clean_line: # Skip empty lines
+        if clean_line:  # Skip empty lines
             chain.learn(clean_line)
 
     # Save the newly updated chain back to the DB
@@ -41,7 +41,7 @@ async def train():
     for key, values in chain.chain.items():
         await conn.execute("INSERT OR REPLACE INTO markov (guild_id, key, value) VALUES (?, ?, ?)",
                            (GUILD_ID, key, json.dumps(values)))
-    
+
     await conn.commit()
     await conn.close()
     print("Training complete! The bot now has a starter brain.")
