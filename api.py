@@ -1,8 +1,8 @@
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import Optional
 import uvicorn
-import threading
+import os
 
 # This will hold the reference to your bot instance
 bot_instance = None
@@ -45,6 +45,7 @@ async def update_guild_settings(guild_id: int, updates: SettingsUpdate):
     if not update_data:
         raise HTTPException(status_code=400, detail="No valid fields provided to update")
         
+    # Calls the new update_settings method on your real SettingsManager
     await bot_instance.settings_manager.update_settings(guild_id, update_data)
     return {"status": "success", "updated_fields": list(update_data.keys())}
 
