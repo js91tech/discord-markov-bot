@@ -3,6 +3,7 @@ import os
 
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
 
+
 async def generate_llm_response(system_prompt, chat_history, model_name=None):
     """Sends the context to OpenRouter and gets a coherent response."""
     if not OPENROUTER_API_KEY:
@@ -31,11 +32,11 @@ async def generate_llm_response(system_prompt, chat_history, model_name=None):
         "Content-Type": "application/json",
         "HTTP-Referer": "https://discord-bot.local",
     }
-    
+
     data = {
         "model": model_name,
         "messages": messages,
-        "max_tokens": 150, # Keep it short like a Discord message
+        "max_tokens": 150,  # Keep it short like a Discord message
         "temperature": 0.9  # A little creative
     }
 
