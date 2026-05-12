@@ -2,6 +2,7 @@ import random
 import re
 import json
 
+
 class MarkovChain:
     def __init__(self, order=2):
         self.order = order
@@ -11,13 +12,13 @@ class MarkovChain:
         words = re.findall(r'\S+', text.lower())
         if len(words) < self.order:
             return
-            
+
         words = ["<START>"] * self.order + words + ["<END>"]
-        
+
         for i in range(len(words) - self.order):
-            key = tuple(words[i:i+self.order])
-            next_word = words[i+self.order]
-            
+            key = tuple(words[i:i + self.order])
+            next_word = words[i + self.order]
+
             if key not in self.chain:
                 self.chain[key] = []
             self.chain[key].append(next_word)
@@ -27,11 +28,11 @@ class MarkovChain:
             return None
 
         current = None
-        
+
         if seed:
             seed_words = re.findall(r'\S+', seed.lower())
             for i in range(len(seed_words) - self.order + 1):
-                test_key = tuple(seed_words[i:i+self.order])
+                test_key = tuple(seed_words[i:i + self.order])
                 if test_key in self.chain:
                     current = test_key
                     break
@@ -44,17 +45,17 @@ class MarkovChain:
         for _ in range(max_words):
             if current not in self.chain:
                 break
-                
+
             next_word = random.choice(self.chain[current])
             if next_word == "<END>":
                 break
-                
+
             output.append(next_word)
             current = tuple(list(current)[1:] + [next_word])
 
         if len(output) < min_words:
             return None
-            
+
         return " ".join(output)
 
     def to_db_dict(self):
