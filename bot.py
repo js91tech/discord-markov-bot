@@ -7,44 +7,14 @@ import asyncio
 # Import your actual Database class
 from database import Database
 
-# Import the centralized defaults
+# Import the REAL SettingsManager from your file
+from settings_manager import SettingsManager
+
+# Import the centralized defaults for safety merging
 from config.default_settings import DEFAULTS
 
 # Import the FastAPI app, the runner function, and the bot instance variable from api.py
 from api import app, run_api, bot_instance as api_bot_instance
-
-# --- SETTINGS MANAGER ---
-class SettingsManager:
-    def __init__(self, db):
-        self.db = db
-        # Use the imported DEFAULTS instead of hardcoding them here
-        self.defaults = DEFAULTS
-
-    async def get_settings(self, guild_id):
-        settings = await self.db.get_settings(guild_id)
-        if not settings:
-            return self.defaults.copy()
-        
-        # Ensure all default keys exist (in case you add new features later)
-        full_settings = self.defaults.copy()
-        full_settings.update(settings)
-        return full_settings
-
-    async def set_setting(self, guild_id, key, value):
-        settings = await self.get_settings(guild_id)
-        settings[key] = value
-        await self.db.save_settings(guild_id, settings)
-
-    async def update_settings(self, guild_id, update_data):
-        """Used by the FastAPI dashboard to update multiple settings at once"""
-        settings = await self.get_settings(guild_id)
-        settings.update(update_data)
-        await self.db.save_settings(guild_id, settings)
-
-    async def reset_all(self, guild_id):
-        """Used by the /botsettings resetdata command"""
-        await self.db.save_settings(guild_id, self.defaults.copy())
-
 
 # --- BOT INTENTS ---
 # Make sure to enable these in the Discord Developer Portal under the "Bot" tab
@@ -75,15 +45,14 @@ class MarkovLLMBot(commands.Bot):
         await self.db.init() # Connects to SQLite and creates tables
         
         print("Initializing Settings Manager...")
+        # Now using your ACTUAL settings_manager.py with caching!
         self.settings_manager = SettingsManager(self.db)
 
         # --- LOAD COGS ---
         print("Loading Cogs...")
-        # Loads the chat cog you just fixed
         await self.load_extension("cogs.chat")
-        # Loads the settings cog you provided
         await self.load_extension("cogs.settings")
-        # If you have other cogs (e.g., cogs.admin), load them here too
+        # If you have other cogs, load them here
 
     async def on_ready(self):
         """
