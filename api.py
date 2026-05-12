@@ -3,9 +3,11 @@ from pydantic import BaseModel
 from typing import Optional
 import uvicorn
 import os
+import asyncio
 
-# This will hold the reference to your bot instance
+# This will hold the reference to your bot instance and its event loop
 bot_instance = None
+bot_loop = None
 
 app = FastAPI(
     title="Discord Bot Dashboard",
@@ -29,24 +31,30 @@ class SettingsUpdate(BaseModel):
 @app.get("/api/settings/{guild_id}")
 async def get_guild_settings(guild_id: int):
     """Fetch the current settings for a specific server"""
-    if not bot_instance:
+    if not bot_instance or not bot_loop:
         raise HTTPException(status_code=503, detail="Bot not ready")
-    settings = await bot_instance.settings_manager.get_settings(guild_id)
+    settings = await asyncio.wrap_future(
+        asyncio.run_coroutine_threadsafe(
+            bot_instance.settings_manager.get_settings(guild_id), bot_loop
+        )
+    )
     return settings
 
 @app.post("/api/settings/{guild_id}")
 async def update_guild_settings(guild_id: int, updates: SettingsUpdate):
     """Update settings for a specific server"""
-    if not bot_instance:
+    if not bot_instance or not bot_loop:
         raise HTTPException(status_code=503, detail="Bot not ready")
     
-    # Only update fields that were actually sent in the request
-    update_data = updates.dict(exclude_unset=True)
+    update_data = updates.model_dump(exclude_unset=True)
     if not update_data:
         raise HTTPException(status_code=400, detail="No valid fields provided to update")
         
-    # Calls the new update_settings method on your real SettingsManager
-    await bot_instance.settings_manager.update_settings(guild_id, update_data)
+    await asyncio.wrap_future(
+        asyncio.run_coroutine_threadsafe(
+            bot_instance.settings_manager.update_settings(guild_id, update_data), bot_loop
+        )
+    )
     return {"status": "success", "updated_fields": list(update_data.keys())}
 
 # --- Server Runner ---
