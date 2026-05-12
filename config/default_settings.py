@@ -5,12 +5,14 @@
 def is_bool(val):
     return str(val).lower() in ["true", "false", "yes", "no", "on", "off", "1", "0"]
 
+
 def is_int(val):
     try:
         int(val)
         return True
     except ValueError:
         return False
+
 
 def is_float(val):
     try:
@@ -19,8 +21,10 @@ def is_float(val):
     except ValueError:
         return False
 
+
 def is_valid_mode(val):
     return val.lower() in ["markov", "llm"]
+
 
 # --- DEFAULTS ---
 # This is the single source of truth for all bot settings.
