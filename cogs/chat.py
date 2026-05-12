@@ -1,10 +1,11 @@
 import discord
-from discord.ext import commands
+from discord.ext import commands, tasks
 import random
 import time
 import re 
 from collections import deque
 from datetime import timedelta
+from discord.utils import utcnow # LINT FIX: Added missing import
 from engine.markov import MarkovChain
 from utils import sanitize_message, search_gif
 from llm import generate_llm_response
@@ -32,6 +33,107 @@ class Chat(commands.Cog):
         self.last_bot_engagement = {} 
         self.recent_timestamps = {}   
 
+    async def cog_load(self):
+        self.proactive_loop.start()
+        self.memory_consolidation_loop.start()
+
+    async def cog_unload(self):
+        self.proactive_loop.cancel()
+        self.memory_consolidation_loop.cancel()
+
+    # --- SHOWER THOUGHT LOOP (Proactive Messaging) ---
+    @tasks.loop(minutes=90)
+    async def proactive_loop(self):
+        await self.bot.wait_until_ready()
+        for guild in self.bot.guilds:
+            if random.random() > 0.16: continue 
+            
+            settings = await self.settings_manager.get_settings(guild.id)
+            if settings.get("brain_mode") != "llm" or not settings.get("response_enabled"): continue
+            
+            target_channel = None
+            allowed = settings.get("allowed_channels", [])
+            if allowed:
+                target_channel = guild.get_channel(random.choice(allowed))
+            else:
+                text_channels = [c for c in guild.text_channels if c.permissions_for(guild.me).send_messages]
+                if text_channels: target_channel = random.choice(text_channels)
+                
+            if not target_channel: continue
+            
+            try:
+                async for last_msg in target_channel.history(limit=1):
+                    if (utcnow() - last_msg.created_at).total_seconds() > 7200: 
+                        continue 
+            except: continue
+            
+            chat_history = []
+            async for msg in target_channel.history(limit=50):
+                if msg.content.startswith("/") and not msg.attachments: continue
+                clean_msg_content = re.sub(r'<@!?\d+>', '', msg.content).strip()
+                if msg.author == self.bot.user:
+                    chat_history.insert(0, {"role": "assistant", "content": clean_msg_content})
+                else:
+                    chat_history.insert(0, {"role": "user", "content": f"{msg.author.display_name}: {clean_msg_content}"})
+            
+            if len(chat_history) < 10: continue 
+            
+            prompt = (
+                "You just walked into the room and saw this conversation. You don't need to reply directly, "
+                "but if a random thought, a continuation of a joke, or a casual observation pops into your head based on the topic, say it. "
+                "If you have nothing interesting to add, respond with exactly the word: NO_THOUGHT"
+            )
+            chat_history.insert(0, {"role": "system", "content": prompt, "model": settings.get("llm_model", "meta-llama/llama-3-8b-instruct")})
+            
+            response = await generate_llm_response(prompt, chat_history)
+            if response and "NO_THOUGHT" not in response.upper():
+                response = re.sub(r'^.{0,30}?:\s*', '', response).strip()
+                response = re.sub(r'<@!?\d+>', '', response).strip()
+                try:
+                    await target_channel.send(sanitize_message(response))
+                except: pass
+
+    # --- MEMORY CONSOLIDATION LOOP (Infinite Long-Term Memory) ---
+    @tasks.loop(hours=24)
+    async def memory_consolidation_loop(self):
+        await self.bot.wait_until_ready()
+        for guild in self.bot.guilds:
+            settings = await self.settings_manager.get_settings(guild.id)
+            if settings.get("brain_mode") != "llm": continue
+            
+            target_channel = None
+            allowed = settings.get("allowed_channels", [])
+            if allowed:
+                target_channel = guild.get_channel(allowed[0])
+            else:
+                text_channels = [c for c in guild.text_channels if c.permissions_for(guild.me).read_message_history]
+                if text_channels: target_channel = text_channels[0]
+                
+            if not target_channel: continue
+            
+            chat_history = []
+            async for msg in target_channel.history(limit=500):
+                if msg.content.startswith("/"): continue
+                clean_msg_content = re.sub(r'<@!?\d+>', '', msg.content).strip()
+                if msg.author == self.bot.user:
+                    chat_history.insert(0, {"role": "assistant", "content": clean_msg_content})
+                else:
+                    chat_history.insert(0, {"role": "user", "content": f"{msg.author.display_name}: {clean_msg_content}"})
+            
+            if len(chat_history) < 50: continue 
+            
+            prompt = (
+                "You are a memory archiver for a Discord bot. Summarize the inside jokes, drama, key facts, "
+                "and user dynamics from this chat log. Keep it under 500 words. Focus on things a new person "
+                "joining would need to know to understand the server's culture and recent events."
+            )
+            chat_history.insert(0, {"role": "system", "content": prompt, "model": settings.get("llm_model", "meta-llama/llama-3-8b-instruct")})
+            
+            summary = await generate_llm_response(prompt, chat_history)
+            if summary:
+                await self.db.save_consolidated_memory(guild.id, {"summary": summary, "timestamp": time.time()})
+                print(f"Consolidated memory updated for guild {guild.id}")
+
     async def get_chain(self, guild_id, order):
         if guild_id not in self.chains:
             self.chains[guild_id] = MarkovChain(order=order)
@@ -43,7 +145,6 @@ class Chat(commands.Cog):
     def _generate_unique_markov(self, chain, seed, trigger_text, guild_id, min_words, max_words):
         recent_bot_msgs = self.bot_recent_messages.get(guild_id, [])
         response = None
-        
         for _ in range(5):
             generated = chain.generate(min_words=min_words, max_words=max_words, seed=seed)
             if generated:
@@ -53,7 +154,6 @@ class Chat(commands.Cog):
                 if gen_clean in recent_bot_msgs: continue
                 response = generated
                 break
-                
         if response:
             if guild_id not in self.bot_recent_messages: self.bot_recent_messages[guild_id] = []
             self.bot_recent_messages[guild_id].append(response.lower().strip())
@@ -107,19 +207,16 @@ class Chat(commands.Cog):
         if channel_id not in self.channel_counters: self.channel_counters[channel_id] = 0
         self.channel_counters[channel_id] += 1
 
-        # --- VIBE CHECK (Activity Scaling) ---
         if channel_id not in self.recent_timestamps:
             self.recent_timestamps[channel_id] = deque(maxlen=50)
         self.recent_timestamps[channel_id].append(time.time())
         
         five_mins_ago = time.time() - 300
         recent_activity = sum(1 for t in self.recent_timestamps[channel_id] if t > five_mins_ago)
-        
         vibe_multiplier = 1.0
         if recent_activity > 30: vibe_multiplier = 2.5 
         elif recent_activity > 15: vibe_multiplier = 1.5
 
-        # --- TRIGGER LOGIC ---
         should_respond = False
         is_mentioned = self.bot.user.mentioned_in(message)
         is_reply_to_bot = (message.reference and message.reference.resolved and 
@@ -129,12 +226,9 @@ class Chat(commands.Cog):
             should_respond = True
         elif is_reply_to_bot and settings["trigger_on_reply"]: 
             should_respond = True
-            
-        # INDIRECT REPLY TRIGGER (Targeted Engagement Window)
         elif not should_respond:
             window_seconds = settings.get("conversation_window_seconds", 120)
             indirect_chance = settings.get("indirect_reply_chance", 0.40)
-            
             engagement = self.last_bot_engagement.get(channel_id)
             if engagement and time.time() - engagement["time"] < window_seconds:
                 chance = indirect_chance
@@ -142,8 +236,6 @@ class Chat(commands.Cog):
                     chance = indirect_chance * 2.0
                 if random.random() < chance:
                     should_respond = True
-                    
-        # Normal Random Chime-in (Modified by Vibe Check)
         if not should_respond:
             effective_chance = settings["response_chance"] * vibe_multiplier
             if random.random() < effective_chance:
@@ -169,45 +261,40 @@ class Chat(commands.Cog):
                 final_content = None
                 reference = message if use_reply else None
 
-                # --- LLM MODE ---
                 if (settings.get("brain_mode") == "llm" or "llama" in settings.get("llm_model", "") or "hermes" in settings.get("llm_model", "")) and not use_gif:
                     chat_history = []
                     prev_msg_time = None
                     
-                    async for msg in message.channel.history(limit=500):
+                    async for msg in message.channel.history(limit=100): # LINT FIX: Reduced limit for efficiency with consolidation
                         if msg.content.startswith("/") and not msg.attachments: continue
-                        
-                        # INNER MONOLOGUE: Insert time gaps
                         if prev_msg_time:
                             time_diff = prev_msg_time - msg.created_at
                             if time_diff > timedelta(minutes=30):
                                 chat_history.insert(0, {"role": "system", "content": "--- A long time passes ---"})
                         prev_msg_time = msg.created_at
-
                         clean_msg_content = re.sub(r'<@!?\d+>', '', msg.content).strip()
                         clean_msg_content = re.sub(r'<#\d+>', '', clean_msg_content).strip()
-                        
                         if msg.author == self.bot.user:
                             role = "assistant"
                             content_payload = clean_msg_content 
                         else:
                             role = "user"
                             content_payload = []
-                            text_part = f"{msg.author.display_name}: {clean_msg_content}"
+                            # LINT FIX: Ensure images always have a text fallback for the API
+                            text_part = f"{msg.author.display_name}: {clean_msg_content if clean_msg_content else 'sent an image'}"
                             content_payload.append({"type": "text", "text": text_part})
-                            
                             for att in msg.attachments:
                                 if att.content_type and "image" in att.content_type:
                                     content_payload.append({"type": "image_url", "image_url": {"url": att.url}})
-                            
-                            if not clean_msg_content and len(content_payload) == 1:
-                                continue 
-                                
+                            if not clean_msg_content and not msg.attachments: continue 
                         chat_history.insert(0, {"role": role, "content": content_payload})
                     
-                    # MEMORY RECALL: Fetch permanent notes about this user
                     user_memories = await self.db.get_memories(guild_id, message.author.id)
+                    consolidated = await self.db.get_consolidated_memory(guild_id)
+                    
                     dynamic_prompt = BASE_SECRET_PROMPT
+                    if consolidated and consolidated.get("summary"):
+                        dynamic_prompt += f"\n\nCONTEXT OF SERVER CULTURE (Long-term memories):\n{consolidated['summary']}\nUse this context subtly to understand inside jokes."
                     if user_memories:
                         memory_str = "\n".join([f"- {m}" for m in user_memories])
                         dynamic_prompt += f"\n\nPermanent memories you have about {message.author.display_name}:\n{memory_str}\nAct subtly aware of these memories, and use them to be even more of a smart-ass if it's funny."
@@ -220,12 +307,10 @@ class Chat(commands.Cog):
                         llm_response = re.sub(r'<@!?\d+>', '', llm_response).strip()
                         if llm_response.lower().strip() in self.bot_recent_messages.get(guild_id, []):
                             llm_response = None
-                            
                         if llm_response:
                             base_text = sanitize_message(llm_response)
                             final_content = f"{message.author.mention} {base_text}" if use_mention else base_text
-                        else:
-                            final_content = None 
+                        else: final_content = None 
                             
                     if not final_content:
                         chain = await self.get_chain(guild_id, settings["markov_order"])
@@ -234,8 +319,6 @@ class Chat(commands.Cog):
                             base_text = f"{settings['personality_prefix']} {response}".strip()
                             base_text = sanitize_message(base_text)
                             final_content = f"{message.author.mention} {base_text}" if use_mention else base_text
-
-                # --- MARKOV MODE / GIF MODE ---
                 else:
                     if use_gif:
                         search_words = [w for w in message.content.lower().split() if len(w) > 3]
@@ -245,7 +328,6 @@ class Chat(commands.Cog):
                             final_content = f"{message.author.mention} " if use_mention else ""
                             final_content += gif_url
                         else: use_gif = False
-                    
                     if not use_gif:
                         chain = await self.get_chain(guild_id, settings["markov_order"])
                         response = self._generate_unique_markov(chain, message.content, message.content, guild_id, settings["min_response_words"], settings["max_response_words"])
@@ -254,16 +336,13 @@ class Chat(commands.Cog):
                             base_text = f"{prefix} {response}".strip()
                             base_text = sanitize_message(base_text)
                             final_content = f"{message.author.mention} {base_text}" if use_mention else base_text
-
                 if final_content:
                     try:
                         await message.channel.send(final_content, reference=reference)
                         self.channel_cooldowns[channel_id] = time.time()
                         self.channel_counters[channel_id] = 0
                         await self.db.increment_stat(guild_id, "messages_sent")
-                        
                         self.last_bot_engagement[channel_id] = {"time": time.time(), "user_id": message.author.id}
-                        
                     except discord.errors.HTTPException as e:
                         print(f"Error sending message: {e}")
 
