@@ -4,6 +4,7 @@ from discord import app_commands
 from config.default_settings import DEFAULTS, VALIDATORS
 from engine.markov import MarkovChain
 from utils import sanitize_message
+from llm import generate_llm_response # CRITICAL LINT FIX: Added missing import
 import json
 
 class SettingsCog(commands.Cog):
@@ -94,6 +95,40 @@ class SettingsCog(commands.Cog):
     async def forget(self, interaction: discord.Interaction, user: discord.Member):
         await self.db.forget_memories(interaction.guild.id, user.id)
         await interaction.response.send_message(f"🧠 I've forgotten everything I knew about {user.display_name}.", ephemeral=True)
+
+    @group.command(name="roast", description="Roast a user based on their recent messages")
+    @app_commands.describe(user="The user you want to roast")
+    async def roast(self, interaction: discord.Interaction, user: discord.Member):
+        if user.bot:
+            await interaction.response.send_message("I only roast humans! 🤖", ephemeral=True)
+            return
+        await interaction.response.defer(thinking=True)
+        
+        user_msgs = []
+        async for msg in interaction.channel.history(limit=500):
+            if msg.author.id == user.id and not msg.content.startswith("/") and msg.content.strip():
+                user_msgs.insert(0, msg.content)
+                if len(user_msgs) >= 30: break
+                
+        if len(user_msgs) < 5:
+            await interaction.followup.send(f"{user.display_name} hasn't said enough for me to roast them.", ephemeral=True)
+            return
+
+        settings = await self.settings_manager.get_settings(interaction.guild.id)
+        roast_prompt = (
+            f"You are a ruthless, sarcastic smart-ass. Analyze these recent messages from {user.display_name} "
+            f"and deliver a devastating, witty roast based on what they talk about and how they type. "
+            f"Keep it 2-4 sentences. Be savage but clever. DO NOT use @ symbols or names in your response."
+        )
+        
+        chat_history = [{"role": "user", "content": "\n".join(user_msgs)}]
+        chat_history.insert(0, {"role": "system", "content": roast_prompt, "model": settings.get("llm_model", "meta-llama/llama-3-8b-instruct")})
+        
+        response = await generate_llm_response(roast_prompt, chat_history)
+        if response:
+            await interaction.followup.send(f"🔥 **Roasting {user.display_name}:** {sanitize_message(response)}")
+        else:
+            await interaction.followup.send("Couldn't come up with a roast right now.", ephemeral=True)
 
     @group.command(name="mimic", description="Generate a message mimicking a specific user")
     @app_commands.describe(user="The user you want to mimic")
