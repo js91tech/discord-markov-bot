@@ -17,37 +17,37 @@ class Database:
         await self.conn.execute("PRAGMA journal_mode=WAL")
         await self.conn.execute(
             """CREATE TABLE IF NOT EXISTS markov (
-                                    guild_id INTEGER, 
-                                    key TEXT, 
-                                    value TEXT, 
+                                    guild_id INTEGER,
+                                    key TEXT,
+                                    value TEXT,
                                     PRIMARY KEY (guild_id, key))"""
         )
         await self.conn.execute(
             """CREATE TABLE IF NOT EXISTS settings (
-                                    guild_id INTEGER PRIMARY KEY, 
+                                    guild_id INTEGER PRIMARY KEY,
                                     settings_json TEXT)"""
         )
         await self.conn.execute(
             """CREATE TABLE IF NOT EXISTS stats (
-                                    guild_id INTEGER PRIMARY KEY, 
+                                    guild_id INTEGER PRIMARY KEY,
                                     messages_learned INTEGER DEFAULT 0,
                                     messages_sent INTEGER DEFAULT 0)"""
         )
         await self.conn.execute(
             """CREATE TABLE IF NOT EXISTS memories (
-                                    guild_id INTEGER, 
-                                    user_id INTEGER, 
+                                    guild_id INTEGER,
+                                    user_id INTEGER,
                                     note TEXT)"""
         )
         await self.conn.execute(
             """CREATE TABLE IF NOT EXISTS consolidated_memories (
-                                    guild_id INTEGER PRIMARY KEY, 
+                                    guild_id INTEGER PRIMARY KEY,
                                     summary_json TEXT)"""
         )
         await self.conn.execute(
             """CREATE TABLE IF NOT EXISTS reminders (
                                     id INTEGER PRIMARY KEY AUTOINCREMENT,
-                                    user_id INTEGER, 
+                                    user_id INTEGER,
                                     channel_id INTEGER,
                                     message TEXT,
                                     trigger_time REAL)"""
@@ -99,7 +99,10 @@ class Database:
     async def increment_stat(self, guild_id, column, amount=1):
         if column not in self.VALID_STAT_COLUMNS:
             raise ValueError(f"Invalid stat column: {column}")
-        sql = f"INSERT INTO stats (guild_id, {column}) VALUES (?, ?) ON CONFLICT(guild_id) DO UPDATE SET {column} = {column} + ?"
+        sql = (
+            f"INSERT INTO stats (guild_id, {column}) VALUES (?, ?) "
+            f"ON CONFLICT(guild_id) DO UPDATE SET {column} = {column} + ?"
+        )
         params = (guild_id, amount, amount)
         await self.queue.put((sql, params))
 
