@@ -235,10 +235,7 @@ class Chat(commands.Cog):
 
         # --- MESSAGE COUNTING (4-10 Random Goal) ---
         if channel_id not in self.channel_counters: self.channel_counters[channel_id] = 0
-        
-        # EFFICIENCY FIX: Only increment counter for real users, not the bot itself
-        if not message.author.bot:
-            self.channel_counters[channel_id] += 1
+        self.channel_counters[channel_id] += 1
             
         if channel_id not in self.channel_message_goals:
             self.channel_message_goals[channel_id] = random.randint(4, 10)
