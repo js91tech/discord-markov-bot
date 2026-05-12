@@ -1,6 +1,7 @@
 from config.default_settings import DEFAULTS
 import copy
 
+
 class SettingsManager:
     def __init__(self, db):
         self.db = db
@@ -14,7 +15,7 @@ class SettingsManager:
         if guild_id not in self.cache:
             db_settings = await self.db.get_settings(guild_id)
             if db_settings:
-                # SAFETY MERGE: If you add new settings to DEFAULTS later, 
+                # SAFETY MERGE: If you add new settings to DEFAULTS later,
                 # this ensures old servers get the new keys automatically instead of crashing.
                 full_settings = copy.deepcopy(DEFAULTS)
                 full_settings.update(db_settings)
