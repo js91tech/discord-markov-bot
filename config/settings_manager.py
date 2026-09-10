@@ -1,5 +1,15 @@
-from config.default_settings import DEFAULTS
+from config.default_settings import DEFAULTS, ID_LIST_KEYS
 import copy
+
+
+def _normalize_id_list(values):
+    normalized = []
+    for value in values or []:
+        try:
+            normalized.append(int(value))
+        except (TypeError, ValueError):
+            continue
+    return normalized
 
 
 class SettingsManager:
@@ -19,6 +29,8 @@ class SettingsManager:
                 # this ensures old servers get the new keys automatically instead of crashing.
                 full_settings = copy.deepcopy(DEFAULTS)
                 full_settings.update(db_settings)
+                for key in ID_LIST_KEYS:
+                    full_settings[key] = _normalize_id_list(full_settings.get(key, []))
                 self.cache[guild_id] = full_settings
             else:
                 self.cache[guild_id] = copy.deepcopy(DEFAULTS)
@@ -27,6 +39,8 @@ class SettingsManager:
 
     async def set_setting(self, guild_id, key, value):
         settings = await self.get_settings(guild_id)
+        if key in ID_LIST_KEYS:
+            value = _normalize_id_list(value)
         settings[key] = value
         await self.db.save_settings(guild_id, settings)
         return settings
@@ -34,7 +48,10 @@ class SettingsManager:
     async def update_settings(self, guild_id, update_data):
         """Used by the FastAPI dashboard to update multiple settings at once"""
         settings = await self.get_settings(guild_id)
-        settings.update(update_data)
+        for key, value in update_data.items():
+            if key in ID_LIST_KEYS:
+                value = _normalize_id_list(value)
+            settings[key] = value
         await self.db.save_settings(guild_id, settings)
         return settings
 

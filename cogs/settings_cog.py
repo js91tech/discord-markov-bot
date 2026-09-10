@@ -1,7 +1,7 @@
 import discord
 from discord.ext import commands
 from discord import app_commands
-from config.default_settings import DEFAULTS, VALIDATORS
+from config.default_settings import DEFAULTS, VALIDATORS, parse_bool
 from utils import sanitize_message
 from llm import generate_llm_response
 import json
@@ -36,7 +36,7 @@ class SettingsCog(commands.Cog):
             await interaction.response.send_message(f"❌ Invalid value for `{key}`.", ephemeral=True)
             return
         if isinstance(DEFAULTS[key], bool):
-            parsed_val = str(value).lower() in ["true", "yes", "on"]
+            parsed_val = parse_bool(value)
         elif isinstance(DEFAULTS[key], int):
             parsed_val = int(value)
         elif isinstance(DEFAULTS[key], float):
@@ -148,8 +148,8 @@ class SettingsCog(commands.Cog):
     async def list_settings(self, interaction: discord.Interaction):
         settings = await self.settings_manager.get_settings(interaction.guild.id)
         embed = discord.Embed(title="Bot Settings", color=discord.Color.blue())
-        for key, value in settings.items():
-            embed.add_field(name=key, value=f"`{value}`", inline=True)
+        for key in DEFAULTS:
+            embed.add_field(name=key, value=f"`{settings.get(key)}`", inline=True)
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @group.command(name="stats", description="View bot statistics")

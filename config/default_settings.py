@@ -1,8 +1,17 @@
 # config/default_settings.py
 
+TRUE_VALUES = {"true", "yes", "on", "1"}
+FALSE_VALUES = {"false", "no", "off", "0"}
+ID_LIST_KEYS = ("ignored_channels", "allowed_channels", "ignored_users")
+
+
 # --- VALIDATORS ---
 def is_bool(val):
-    return str(val).lower() in ["true", "false", "yes", "no", "on", "off", "1", "0"]
+    return str(val).lower() in TRUE_VALUES | FALSE_VALUES
+
+
+def parse_bool(val):
+    return str(val).lower() in TRUE_VALUES
 
 
 def is_int(val):
