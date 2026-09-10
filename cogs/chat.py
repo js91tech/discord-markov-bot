@@ -389,7 +389,7 @@ class Chat(commands.Cog):
                     should_respond = False
 
         if should_respond:
-            if random.random() < settings["reaction_chance"]:
+            if not forced_response and random.random() < settings["reaction_chance"]:
                 emoji_options = ['💀', '😭', '🔥', '💯', '🤣', '🙄', '👀', '🫡', '🤨']
                 try:
                     await message.add_reaction(random.choice(emoji_options))
