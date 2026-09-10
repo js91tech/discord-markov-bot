@@ -33,6 +33,7 @@ class SettingsUpdate(BaseModel):
     personality_prefix: Optional[str] = None
     llm_model: Optional[str] = None
     fallback_llm_model: Optional[str] = None
+    image_model: Optional[str] = None
     response_chance: Optional[float] = None
 
 

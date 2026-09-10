@@ -1,0 +1,12 @@
+{
+  "hannah": {
+    "name": "Hannah",
+    "aliases": ["hannah"],
+    "image": "hannah.jpg",
+    "notes": [
+      "This is Hannah. She is a real person in this Discord community.",
+      "A reference photo is on file. If someone asks for a picture, drawing, photo, or generated image of Hannah, the bot should generate one that looks like her."
+    ],
+    "appearance": "Adult woman with shoulder-length dark brown hair, glasses, and a small hair clip. Often wears a blue floral short-sleeve blouse, navy leggings, white sneakers, an ID badge on a lanyard, and may carry a cream tote bag and a purple tumbler."
+  }
+}

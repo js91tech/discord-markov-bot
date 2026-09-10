@@ -8,10 +8,18 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from config.default_settings import DEFAULTS, parse_bool
 from config.settings_manager import SettingsManager
-from llm import _should_fallback, generate_llm_response
+from llm import _should_fallback, generate_llm_response, _decode_image_payload, reference_image_data_url
 from utils import sanitize_message, search_gif
 from cogs.settings_cog import build_roast_prompt
 from cogs.chat import DEFAULT_PERSONALITY
+from people import (
+    find_person,
+    find_person_for_image_request,
+    is_image_request,
+    is_nsfw_request,
+    build_image_prompt,
+    people_prompt_block,
+)
 
 
 class FakeDB:
@@ -298,6 +306,46 @@ class TestGifSearch(unittest.TestCase):
 
         asyncio.run(run())
         self.assertIn("hello%20world", captured["url"])
+
+
+class TestPeopleDataset(unittest.TestCase):
+    def test_hannah_profile_loaded(self):
+        profile = find_person("can you draw Hannah please")
+        self.assertIsNotNone(profile)
+        self.assertEqual(profile["name"], "Hannah")
+        self.assertTrue(os.path.exists(profile["image_path"]))
+
+    def test_image_request_detection(self):
+        self.assertTrue(is_image_request("draw hannah as a wizard"))
+        self.assertTrue(is_image_request("generate a picture of Hannah"))
+        self.assertFalse(is_image_request("hannah is in the chat"))
+        self.assertIsNotNone(find_person_for_image_request("make an image of hannah"))
+        self.assertIsNone(find_person_for_image_request("hannah said hi"))
+
+    def test_nsfw_blocked(self):
+        self.assertTrue(is_nsfw_request("draw hannah nude"))
+        self.assertFalse(is_nsfw_request("draw hannah at the park"))
+
+    def test_image_prompt_keeps_likeness(self):
+        profile = find_person("hannah")
+        prompt = build_image_prompt(profile, "draw hannah as a barista")
+        self.assertIn("Hannah", prompt)
+        self.assertIn("reference photo", prompt)
+        self.assertIn("barista", prompt)
+
+    def test_people_block_mentions_hannah(self):
+        self.assertIn("Hannah", people_prompt_block())
+
+    def test_reference_image_data_url(self):
+        profile = find_person("hannah")
+        data_url = reference_image_data_url(profile["image_path"])
+        self.assertTrue(data_url.startswith("data:image/jpeg;base64,"))
+
+    def test_decode_image_payload(self):
+        import base64
+        raw = base64.b64encode(b"hello-image").decode("ascii")
+        self.assertEqual(_decode_image_payload({"b64_json": raw}), b"hello-image")
+        self.assertEqual(_decode_image_payload(f"data:image/png;base64,{raw}"), b"hello-image")
 
 
 if __name__ == "__main__":

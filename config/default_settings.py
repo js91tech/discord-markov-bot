@@ -48,6 +48,7 @@ DEFAULTS = {
     "personality_prefix": "",
     "llm_model": "meta-llama/llama-3-8b-instruct",
     "fallback_llm_model": "google/gemma-2-9b-it:free",
+    "image_model": "google/gemini-2.5-flash-image",
     "response_chance": 0.15,
 }
 
