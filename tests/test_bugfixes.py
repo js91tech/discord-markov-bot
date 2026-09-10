@@ -18,6 +18,7 @@ from people import (
     is_image_request,
     is_nsfw_request,
     build_image_prompt,
+    extract_scene,
     people_prompt_block,
 )
 
@@ -318,8 +319,10 @@ class TestPeopleDataset(unittest.TestCase):
     def test_image_request_detection(self):
         self.assertTrue(is_image_request("draw hannah as a wizard"))
         self.assertTrue(is_image_request("generate a picture of Hannah"))
+        self.assertTrue(is_image_request("drawhannah as a ballerina"))
         self.assertFalse(is_image_request("hannah is in the chat"))
         self.assertIsNotNone(find_person_for_image_request("make an image of hannah"))
+        self.assertIsNotNone(find_person_for_image_request("drawhannah as a ballerina"))
         self.assertIsNone(find_person_for_image_request("hannah said hi"))
 
     def test_nsfw_blocked(self):
@@ -330,8 +333,10 @@ class TestPeopleDataset(unittest.TestCase):
         profile = find_person("hannah")
         prompt = build_image_prompt(profile, "draw hannah as a barista")
         self.assertIn("Hannah", prompt)
-        self.assertIn("reference photo", prompt)
+        self.assertIn("attached image", prompt)
         self.assertIn("barista", prompt)
+        self.assertNotIn("draw hannah as a barista", prompt.lower())
+        self.assertEqual(extract_scene(profile, "Draw hannah as a ballerina"), "ballerina")
 
     def test_people_block_mentions_hannah(self):
         self.assertIn("Hannah", people_prompt_block())

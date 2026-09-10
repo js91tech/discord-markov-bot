@@ -1,12 +1,12 @@
 {
   "hannah": {
     "name": "Hannah",
-    "aliases": ["hannah"],
+    "aliases": ["hannah", "hannnah"],
     "image": "hannah.jpg",
     "notes": [
       "This is Hannah. She is a real person in this Discord community.",
-      "A reference photo is on file. If someone asks for a picture, drawing, photo, or generated image of Hannah, the bot should generate one that looks like her."
+      "A reference photo is on file. Generated images of Hannah MUST copy her real face from that photo, not a generic woman named Hannah."
     ],
-    "appearance": "Adult woman with shoulder-length dark brown hair, glasses, and a small hair clip. Often wears a blue floral short-sleeve blouse, navy leggings, white sneakers, an ID badge on a lanyard, and may carry a cream tote bag and a purple tumbler."
+    "appearance": "Use the attached reference photo as the only identity source. She has a round face, fair skin, dark brown shoulder-length hair with a clip, rectangular glasses, a soft smile, and a plus-size build. Do not slim her down, remove her glasses, or replace her with a different woman."
   }
 }
