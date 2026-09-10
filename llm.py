@@ -78,8 +78,8 @@ async def generate_llm_response(system_prompt, chat_history, model_name=None,
     if not allow_fallback or fallback_model == model_name:
         return None
 
-    if _should_fallback(status, error_text) or status >= 500:
-        print(f"Falling back from {model_name} to {fallback_model}")
+    if _should_fallback(status, error_text) or status >= 400:
+        print(f"Falling back from {model_name} to {fallback_model} (status {status})")
         content, _, _ = await _request_completion(fallback_model, messages)
         return content
 
