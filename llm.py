@@ -147,30 +147,75 @@ def reference_image_data_url(image_path):
     return f"data:{mime};base64,{encoded}"
 
 
+def _image_from_chat_result(result):
+    message = result.get("choices", [{}])[0].get("message", {})
+    for item in message.get("images") or []:
+        decoded = _decode_image_payload(item)
+        if decoded:
+            return decoded
+    content_parts = message.get("content")
+    if isinstance(content_parts, list):
+        for part in content_parts:
+            decoded = _decode_image_payload(part)
+            if decoded:
+                return decoded
+    return None
+
+
 async def generate_image(prompt, reference_path=None, model_name=None):
-    """Generate an image via OpenRouter, optionally using a reference photo."""
+    """Generate an image via OpenRouter. Known-person jobs must include a reference photo."""
     if not OPENROUTER_API_KEY:
         print("ERROR: OPENROUTER_API_KEY is missing from environment variables!")
         return None
 
-    model_name = model_name or os.environ.get("IMAGE_MODEL", "google/gemini-2.5-flash-image")
     reference_url = reference_image_data_url(reference_path)
+    if reference_path and not reference_url:
+        print(f"ERROR: Reference photo missing: {reference_path}")
+        return None
+
+    model_name = model_name or os.environ.get("IMAGE_MODEL", "google/gemini-2.5-flash-image")
     headers = {
         "Authorization": f"Bearer {OPENROUTER_API_KEY}",
         "Content-Type": "application/json",
         "HTTP-Referer": "https://discord-bot.local",
     }
 
-    dedicated_payload = {
-        "model": model_name,
-        "prompt": prompt,
-        "n": 1,
-    }
-    if reference_url:
-        dedicated_payload["input_references"] = [reference_url]
-
     try:
         async with aiohttp.ClientSession() as session:
+            if reference_url:
+                content = [
+                    {"type": "image_url", "image_url": {"url": reference_url}},
+                    {"type": "text", "text": prompt},
+                ]
+                chat_payload = {
+                    "model": model_name,
+                    "messages": [{"role": "user", "content": content}],
+                    "modalities": ["image", "text"],
+                }
+                async with session.post(
+                    "https://openrouter.ai/api/v1/chat/completions",
+                    headers=headers,
+                    json=chat_payload,
+                ) as resp:
+                    if resp.status == 200:
+                        decoded = _image_from_chat_result(await resp.json())
+                        if decoded:
+                            return decoded
+                        print("Image chat returned no image data.")
+                    else:
+                        error_text = await resp.text()
+                        print(f"OpenRouter Image chat Error: {resp.status} - {error_text}")
+
+            dedicated_payload = {
+                "model": model_name,
+                "prompt": prompt,
+                "n": 1,
+            }
+            if reference_url:
+                dedicated_payload["input_references"] = [reference_url]
+            elif reference_path:
+                return None
+
             async with session.post(
                 "https://openrouter.ai/api/v1/images",
                 headers=headers,
@@ -186,36 +231,6 @@ async def generate_image(prompt, reference_path=None, model_name=None):
                 else:
                     error_text = await resp.text()
                     print(f"OpenRouter Image API Error: {resp.status} - {error_text}")
-
-            content = [{"type": "text", "text": prompt}]
-            if reference_url:
-                content.append({"type": "image_url", "image_url": {"url": reference_url}})
-            chat_payload = {
-                "model": model_name,
-                "messages": [{"role": "user", "content": content}],
-                "modalities": ["image", "text"],
-            }
-            async with session.post(
-                "https://openrouter.ai/api/v1/chat/completions",
-                headers=headers,
-                json=chat_payload,
-            ) as resp:
-                if resp.status != 200:
-                    error_text = await resp.text()
-                    print(f"OpenRouter Image chat Error: {resp.status} - {error_text}")
-                    return None
-                result = await resp.json()
-                message = result.get("choices", [{}])[0].get("message", {})
-                for item in message.get("images") or []:
-                    decoded = _decode_image_payload(item)
-                    if decoded:
-                        return decoded
-                content_parts = message.get("content")
-                if isinstance(content_parts, list):
-                    for part in content_parts:
-                        decoded = _decode_image_payload(part)
-                        if decoded:
-                            return decoded
     except Exception as e:
         print(f"Image generation error: {e}")
     return None
