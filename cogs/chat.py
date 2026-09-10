@@ -128,10 +128,9 @@ class Chat(commands.Cog):
                 consolidated=consolidated,
                 recent_replies=recent_replies if attempt > 0 else None,
             )
-            chat_history_with_prompt = [{"role": "system", "content": dynamic_prompt}, *chat_history]
             candidate = await generate_llm_response(
                 dynamic_prompt,
-                chat_history_with_prompt,
+                chat_history,
                 model_name=model_name,
                 fallback_model=fallback_model,
             )
@@ -225,11 +224,17 @@ class Chat(commands.Cog):
                     target_channel = random.choice(text_channels)
             if not target_channel:
                 continue
+            stale_channel = False
             try:
                 async for last_msg in target_channel.history(limit=1):
                     if (utcnow() - last_msg.created_at).total_seconds() > 7200:
-                        continue
+                        stale_channel = True
+                    break
+                else:
+                    stale_channel = True
             except Exception:
+                continue
+            if stale_channel:
                 continue
             chat_history = []
             async for msg in target_channel.history(limit=50):
@@ -355,10 +360,13 @@ class Chat(commands.Cog):
         is_reply_to_bot = (message.reference and message.reference.resolved and
                            message.reference.resolved.author == self.bot.user)
 
+        forced_response = False
         if is_mentioned and settings["trigger_on_mention"]:
             should_respond = True
+            forced_response = True
         elif is_reply_to_bot and settings["trigger_on_reply"]:
             should_respond = True
+            forced_response = True
 
         if not should_respond:
             window_seconds = settings.get("conversation_window_seconds", 120)
@@ -375,7 +383,7 @@ class Chat(commands.Cog):
             if random.random() < settings.get("response_chance", 0.15):
                 should_respond = True
 
-        if should_respond:
+        if should_respond and not forced_response:
             if channel_id in self.channel_cooldowns:
                 if time.time() - self.channel_cooldowns[channel_id] < settings["cooldown_seconds"]:
                     should_respond = False
