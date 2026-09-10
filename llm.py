@@ -112,3 +112,110 @@ async def generate_llm_response(system_prompt, chat_history, model_name=None,
     fallback_messages = _strip_images(messages) if _has_images(messages) else messages
     content, _, _ = await _request_completion(fallback_model, fallback_messages)
     return content
+
+
+def _decode_image_payload(entry):
+    import base64
+
+    raw = None
+    if isinstance(entry, str):
+        raw = entry
+    elif isinstance(entry, dict):
+        image_url = entry.get("image_url")
+        if isinstance(image_url, dict):
+            raw = image_url.get("url")
+        raw = raw or entry.get("url") or entry.get("b64_json") or entry.get("data")
+    if not raw or not isinstance(raw, str):
+        return None
+    if raw.startswith("data:") and "," in raw:
+        raw = raw.split(",", 1)[1]
+    try:
+        return base64.b64decode(raw)
+    except Exception:
+        return None
+
+
+def reference_image_data_url(image_path):
+    import base64
+
+    if not image_path or not os.path.exists(image_path):
+        return None
+    with open(image_path, "rb") as f:
+        encoded = base64.b64encode(f.read()).decode("ascii")
+    ext = os.path.splitext(image_path)[1].lower()
+    mime = "image/png" if ext == ".png" else "image/jpeg"
+    return f"data:{mime};base64,{encoded}"
+
+
+async def generate_image(prompt, reference_path=None, model_name=None):
+    """Generate an image via OpenRouter, optionally using a reference photo."""
+    if not OPENROUTER_API_KEY:
+        print("ERROR: OPENROUTER_API_KEY is missing from environment variables!")
+        return None
+
+    model_name = model_name or os.environ.get("IMAGE_MODEL", "google/gemini-2.5-flash-image")
+    reference_url = reference_image_data_url(reference_path)
+    headers = {
+        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "Content-Type": "application/json",
+        "HTTP-Referer": "https://discord-bot.local",
+    }
+
+    dedicated_payload = {
+        "model": model_name,
+        "prompt": prompt,
+        "n": 1,
+    }
+    if reference_url:
+        dedicated_payload["input_references"] = [reference_url]
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                "https://openrouter.ai/api/v1/images",
+                headers=headers,
+                json=dedicated_payload,
+            ) as resp:
+                if resp.status == 200:
+                    result = await resp.json()
+                    for item in result.get("data") or []:
+                        decoded = _decode_image_payload(item)
+                        if decoded:
+                            return decoded
+                    print(f"Image API returned no image data: {result}")
+                else:
+                    error_text = await resp.text()
+                    print(f"OpenRouter Image API Error: {resp.status} - {error_text}")
+
+            content = [{"type": "text", "text": prompt}]
+            if reference_url:
+                content.append({"type": "image_url", "image_url": {"url": reference_url}})
+            chat_payload = {
+                "model": model_name,
+                "messages": [{"role": "user", "content": content}],
+                "modalities": ["image", "text"],
+            }
+            async with session.post(
+                "https://openrouter.ai/api/v1/chat/completions",
+                headers=headers,
+                json=chat_payload,
+            ) as resp:
+                if resp.status != 200:
+                    error_text = await resp.text()
+                    print(f"OpenRouter Image chat Error: {resp.status} - {error_text}")
+                    return None
+                result = await resp.json()
+                message = result.get("choices", [{}])[0].get("message", {})
+                for item in message.get("images") or []:
+                    decoded = _decode_image_payload(item)
+                    if decoded:
+                        return decoded
+                content_parts = message.get("content")
+                if isinstance(content_parts, list):
+                    for part in content_parts:
+                        decoded = _decode_image_payload(part)
+                        if decoded:
+                            return decoded
+    except Exception as e:
+        print(f"Image generation error: {e}")
+    return None

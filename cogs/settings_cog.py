@@ -3,9 +3,11 @@ from discord.ext import commands
 from discord import app_commands
 from config.default_settings import DEFAULTS, VALIDATORS, parse_bool
 from utils import sanitize_message
-from llm import generate_llm_response
+from llm import generate_llm_response, generate_image
 from cogs.chat import DEFAULT_PERSONALITY
+from people import load_profiles, is_nsfw_request, build_image_prompt, find_person
 import json
+import io
 
 
 def build_roast_prompt(settings, display_name):
@@ -171,6 +173,43 @@ class SettingsCog(commands.Cog):
         await self.db.delete_guild_data(interaction.guild.id)
         await self.settings_manager.reset_all(interaction.guild.id)
         await interaction.response.send_message("💣 All data and settings have been wiped.", ephemeral=True)
+
+    async def person_autocomplete(self, interaction: discord.Interaction,
+                                  current: str) -> list[app_commands.Choice[str]]:
+        current_lower = current.lower()
+        choices = []
+        for profile in load_profiles():
+            if current_lower in profile["name"].lower() or current_lower in profile["id"]:
+                choices.append(app_commands.Choice(name=profile["name"], value=profile["id"]))
+        return choices[:25]
+
+    @app_commands.command(name="imagine", description="Generate an image of a known person")
+    @app_commands.describe(person="Who to generate", prompt="What they should be doing")
+    @app_commands.autocomplete(person=person_autocomplete)
+    async def imagine(self, interaction: discord.Interaction, person: str, prompt: str = "a casual portrait"):
+        profile = find_person(person) or next(
+            (p for p in load_profiles() if p["id"] == person.lower()),
+            None,
+        )
+        if not profile:
+            await interaction.response.send_message("I don't have a reference for that person.", ephemeral=True)
+            return
+        if is_nsfw_request(prompt):
+            await interaction.response.send_message("Yeah no, I'm not generating that.", ephemeral=True)
+            return
+        await interaction.response.defer(thinking=True)
+        settings = await self.settings_manager.get_settings(interaction.guild.id)
+        image_bytes = await generate_image(
+            build_image_prompt(profile, prompt),
+            reference_path=profile.get("image_path"),
+            model_name=settings.get("image_model"),
+        )
+        if image_bytes:
+            await interaction.followup.send(
+                file=discord.File(io.BytesIO(image_bytes), filename=f"{profile['id']}.png")
+            )
+        else:
+            await interaction.followup.send("Couldn't generate that image right now.", ephemeral=True)
 
 
 async def setup(bot):

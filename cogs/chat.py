@@ -1,4 +1,5 @@
 import os
+import io
 import discord
 from discord.ext import commands, tasks
 import random
@@ -8,7 +9,8 @@ from collections import deque
 from datetime import timedelta
 from discord.utils import utcnow
 from utils import sanitize_message, search_gif
-from llm import generate_llm_response
+from llm import generate_llm_response, generate_image
+from people import find_person_for_image_request, is_nsfw_request, build_image_prompt, people_prompt_block
 
 DEFAULT_PERSONALITY = (
     "You are a highly intelligent but insufferably sarcastic human in a Discord server. You are NOT an AI assistant. "
@@ -91,6 +93,9 @@ class Chat(commands.Cog):
         if recent_replies:
             recent_str = "\n".join([f"- {r}" for r in recent_replies[-5:]])
             prompt += f"\n\nYou recently said these — do NOT repeat or closely paraphrase them:\n{recent_str}"
+        people_block = people_prompt_block()
+        if people_block:
+            prompt += people_block
         return prompt
 
     def _record_bot_message(self, guild_id, text):
@@ -373,9 +378,13 @@ class Chat(commands.Cog):
         is_mentioned = self.bot.user in message.mentions
         is_reply_to_bot = (message.reference and message.reference.resolved and
                            message.reference.resolved.author == self.bot.user)
+        image_person = find_person_for_image_request(message.content)
 
         forced_response = False
-        if is_mentioned and settings["trigger_on_mention"]:
+        if image_person:
+            should_respond = True
+            forced_response = True
+        elif is_mentioned and settings["trigger_on_mention"]:
             should_respond = True
             forced_response = True
         elif is_reply_to_bot and settings["trigger_on_reply"]:
@@ -413,11 +422,41 @@ class Chat(commands.Cog):
                     pass
 
             async with message.channel.typing():
-                use_reply = is_mentioned or is_reply_to_bot or (random.random() < settings["random_reply_chance"])
+                use_reply = is_mentioned or is_reply_to_bot or image_person or (
+                    random.random() < settings["random_reply_chance"])
                 use_mention = random.random() < settings["random_mention_chance"]
-                use_gif = random.random() < settings["gif_chance"]
+                use_gif = (not image_person) and (random.random() < settings["gif_chance"])
                 final_content = None
                 reference = message if use_reply else None
+
+                if image_person:
+                    if is_nsfw_request(message.content):
+                        final_content = "yeah no i'm not generating that"
+                    else:
+                        image_bytes = await generate_image(
+                            build_image_prompt(image_person, message.content),
+                            reference_path=image_person.get("image_path"),
+                            model_name=settings.get("image_model"),
+                        )
+                        if image_bytes:
+                            caption = f"{message.author.mention} here you go" if use_mention else "here you go"
+                            try:
+                                await message.channel.send(
+                                    caption,
+                                    reference=reference,
+                                    file=discord.File(io.BytesIO(image_bytes), filename=f"{image_person['id']}.png"),
+                                )
+                                self._record_bot_message(guild_id, caption)
+                                self.channel_cooldowns[channel_id] = time.time()
+                                await self.db.increment_stat(guild_id, "messages_sent")
+                                self.last_bot_engagement[channel_id] = {
+                                    "time": time.time(),
+                                    "user_id": message.author.id,
+                                }
+                                return
+                            except discord.errors.HTTPException as e:
+                                print(f"[{guild_id}] Error sending generated image: {e}")
+                        final_content = f"couldn't generate {image_person['name']} right now"
 
                 if use_gif:
                     search_words = [w for w in message.content.lower().split() if len(w) > 3]
