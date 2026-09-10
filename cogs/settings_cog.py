@@ -4,7 +4,18 @@ from discord import app_commands
 from config.default_settings import DEFAULTS, VALIDATORS, parse_bool
 from utils import sanitize_message
 from llm import generate_llm_response
+from cogs.chat import DEFAULT_PERSONALITY
 import json
+
+
+def build_roast_prompt(settings, display_name):
+    personality = (settings.get("personality_prefix") or "").strip() or DEFAULT_PERSONALITY
+    return (
+        f"{personality}\n\n"
+        f"Analyze these recent messages from {display_name} and deliver a witty roast "
+        f"based on what they talk about and how they type. Stay in character. "
+        f"Keep it 2-4 sentences. Be clever. DO NOT use @ symbols or names in your response."
+    )
 
 
 class SettingsCog(commands.Cog):
@@ -126,11 +137,7 @@ class SettingsCog(commands.Cog):
             return
 
         settings = await self.settings_manager.get_settings(interaction.guild.id)
-        roast_prompt = (
-            f"You are a ruthless, sarcastic smart-ass. Analyze these recent messages from {user.display_name} "
-            f"and deliver a devastating, witty roast based on what they talk about and how they type. "
-            f"Keep it 2-4 sentences. Be savage but clever. DO NOT use @ symbols or names in your response."
-        )
+        roast_prompt = build_roast_prompt(settings, user.display_name)
 
         chat_history = [{"role": "user", "content": "\n".join(user_msgs)}]
         response = await generate_llm_response(
