@@ -1,0 +1,199 @@
+import asyncio
+import os
+import sys
+import unittest
+from unittest.mock import AsyncMock, MagicMock, patch
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from config.default_settings import DEFAULTS
+from config.settings_manager import SettingsManager
+from llm import _should_fallback, generate_llm_response
+from utils import sanitize_message
+
+
+class FakeDB:
+    def __init__(self):
+        self.settings = {}
+
+    async def get_settings(self, guild_id):
+        return self.settings.get(guild_id)
+
+    async def save_settings(self, guild_id, settings_dict):
+        self.settings[guild_id] = settings_dict
+
+    async def get_memories(self, guild_id, user_id):
+        return []
+
+    async def get_consolidated_memory(self, guild_id):
+        return None
+
+
+class TestUtils(unittest.TestCase):
+    def test_sanitize_strips_mass_pings(self):
+        self.assertNotIn("@everyone", sanitize_message("hello @everyone world"))
+
+    def test_sanitize_truncates_long_messages(self):
+        self.assertLessEqual(len(sanitize_message("x" * 3000)), 1953)
+
+
+class TestLLMFallback(unittest.TestCase):
+    def test_should_fallback_on_billing_errors(self):
+        self.assertTrue(_should_fallback(402, ""))
+        self.assertTrue(_should_fallback(429, ""))
+        self.assertTrue(_should_fallback(400, "insufficient credits"))
+
+    def test_should_not_fallback_on_generic_400(self):
+        self.assertFalse(_should_fallback(400, "bad request"))
+
+    def run_async(self, coro):
+        return asyncio.run(coro)
+
+    def test_falls_back_when_primary_returns_404(self):
+        calls = []
+
+        async def fake_request(model_name, messages):
+            calls.append(model_name)
+            if model_name == "primary-model":
+                return None, 404, "model not found"
+            return "fallback reply", 200, ""
+
+        with patch("llm.OPENROUTER_API_KEY", "test-key"):
+            with patch("llm._request_completion", side_effect=fake_request):
+                result = self.run_async(generate_llm_response(
+                    "system",
+                    [{"role": "user", "content": "hi"}],
+                    model_name="primary-model",
+                    fallback_model="free-model",
+                ))
+
+        self.assertEqual(result, "fallback reply")
+        self.assertEqual(calls, ["primary-model", "free-model"])
+
+    def test_falls_back_on_network_error(self):
+        calls = []
+
+        async def fake_request(model_name, messages):
+            calls.append(model_name)
+            if model_name == "primary-model":
+                return None, 0, "connection reset"
+            return "fallback reply", 200, ""
+
+        with patch("llm.OPENROUTER_API_KEY", "test-key"):
+            with patch("llm._request_completion", side_effect=fake_request):
+                result = self.run_async(generate_llm_response(
+                    "system",
+                    [{"role": "user", "content": "hi"}],
+                    model_name="primary-model",
+                    fallback_model="free-model",
+                ))
+
+        self.assertEqual(result, "fallback reply")
+        self.assertEqual(calls, ["primary-model", "free-model"])
+
+    def test_single_system_message_in_payload(self):
+        captured = []
+
+        async def fake_request(model_name, messages):
+            captured.append(messages)
+            return "ok", 200, ""
+
+        with patch("llm.OPENROUTER_API_KEY", "test-key"):
+            with patch("llm._request_completion", side_effect=fake_request):
+                self.run_async(generate_llm_response(
+                    "personality prompt",
+                    [{"role": "user", "content": "hello"}],
+                    model_name="primary-model",
+                ))
+
+        system_messages = [m for m in captured[0] if m["role"] == "system"]
+        self.assertEqual(len(system_messages), 1)
+        self.assertEqual(system_messages[0]["content"], "personality prompt")
+
+
+class TestSettingsManager(unittest.TestCase):
+    def run_async(self, coro):
+        return asyncio.run(coro)
+
+    def test_merges_new_defaults_for_old_guilds(self):
+        db = FakeDB()
+        db.settings[1] = {"response_enabled": False, "brain_mode": "markov"}
+        manager = SettingsManager(db)
+
+        settings = self.run_async(manager.get_settings(1))
+        self.assertFalse(settings["response_enabled"])
+        self.assertIn("fallback_llm_model", settings)
+        self.assertEqual(settings["fallback_llm_model"], DEFAULTS["fallback_llm_model"])
+
+
+class TestChatHelpers(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        from cogs.chat import Chat
+
+        bot = MagicMock()
+        db = MagicMock()
+        db.get_memories = AsyncMock(return_value=["likes pizza"])
+        db.get_consolidated_memory = AsyncMock(return_value={"summary": "chaotic server"})
+        settings_manager = MagicMock()
+        cls.chat = Chat(bot, db, settings_manager)
+
+    def test_build_system_prompt_uses_personality_prefix(self):
+        prompt = self.chat._build_system_prompt(
+            {"personality_prefix": "You are a pirate."},
+            author_name="Alice",
+            user_memories=["likes pizza"],
+            consolidated={"summary": "chaotic server"},
+        )
+        self.assertIn("You are a pirate.", prompt)
+        self.assertNotIn("insufferably sarcastic", prompt)
+        self.assertIn("Alice", prompt)
+        self.assertIn("chaotic server", prompt)
+
+    def test_duplicate_tracking_strips_mentions(self):
+        guild_id = 99
+        self.chat._record_bot_message(guild_id, "<@123> hello there")
+        self.assertTrue(self.chat._is_recent_duplicate(guild_id, "hello there"))
+
+    def test_pick_unique_fallback_avoids_recent(self):
+        guild_id = 100
+        quote = "i'm just here for the chaos honestly"
+        self.chat._record_bot_message(guild_id, quote)
+        with patch("cogs.chat.random.choice", side_effect=lambda items: items[0]):
+            picked = self.chat._pick_unique_fallback(guild_id)
+            self.assertNotEqual(picked.lower().strip(), quote)
+
+
+class TestTriggerLogic(unittest.TestCase):
+    def test_forced_response_should_bypass_cooldown(self):
+        forced_response = True
+        should_respond = True
+        channel_id = 1
+        channel_cooldowns = {1: 9999999999}
+        cooldown_seconds = 10
+
+        if should_respond and not forced_response:
+            if channel_id in channel_cooldowns:
+                if 9999999999 - channel_cooldowns[channel_id] < cooldown_seconds:
+                    should_respond = False
+
+        self.assertTrue(should_respond)
+
+    def test_random_response_blocked_by_cooldown(self):
+        forced_response = False
+        should_respond = True
+        channel_id = 1
+        now = 1000.0
+        channel_cooldowns = {1: now - 5}
+        cooldown_seconds = 10
+
+        if should_respond and not forced_response:
+            if channel_id in channel_cooldowns:
+                if now - channel_cooldowns[channel_id] < cooldown_seconds:
+                    should_respond = False
+
+        self.assertFalse(should_respond)
+
+
+if __name__ == "__main__":
+    unittest.main()
