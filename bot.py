@@ -73,6 +73,8 @@ class DiscordLLMBot(commands.Bot):
         print("Loading Cogs...")
         await self.load_extension("cogs.chat")
         await self.load_extension("cogs.settings_cog")
+        synced = await self.tree.sync()
+        print(f"Synced {len(synced)} slash commands.")
 
     async def on_ready(self):
         """Runs when the bot successfully connects to Discord."""

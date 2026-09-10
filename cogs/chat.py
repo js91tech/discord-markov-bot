@@ -135,7 +135,7 @@ class Chat(commands.Cog):
                 fallback_model=fallback_model,
             )
             if not candidate:
-                continue
+                break
             candidate = re.sub(r'^.{0,30}?:\s*', '', candidate).strip()
             candidate = re.sub(r'<@!?\d+>', '', candidate).strip()
             if candidate and not self._is_recent_duplicate(guild_id, candidate):
@@ -216,10 +216,16 @@ class Chat(commands.Cog):
                 continue
             target_channel = None
             allowed = settings.get("allowed_channels", [])
+            ignored = set(settings.get("ignored_channels", []))
             if allowed:
-                target_channel = guild.get_channel(random.choice(allowed))
+                allowed = [cid for cid in allowed if cid not in ignored]
+                if allowed:
+                    target_channel = guild.get_channel(random.choice(allowed))
             else:
-                text_channels = [c for c in guild.text_channels if c.permissions_for(guild.me).send_messages]
+                text_channels = [
+                    c for c in guild.text_channels
+                    if c.permissions_for(guild.me).send_messages and c.id not in ignored
+                ]
                 if text_channels:
                     target_channel = random.choice(text_channels)
             if not target_channel:
@@ -277,12 +283,20 @@ class Chat(commands.Cog):
         await self.bot.wait_until_ready()
         for guild in self.bot.guilds:
             settings = await self.settings_manager.get_settings(guild.id)
+            if not settings.get("response_enabled"):
+                continue
             target_channel = None
             allowed = settings.get("allowed_channels", [])
+            ignored = set(settings.get("ignored_channels", []))
             if allowed:
-                target_channel = guild.get_channel(allowed[0])
+                allowed = [cid for cid in allowed if cid not in ignored]
+                if allowed:
+                    target_channel = guild.get_channel(allowed[0])
             else:
-                text_channels = [c for c in guild.text_channels if c.permissions_for(guild.me).read_message_history]
+                text_channels = [
+                    c for c in guild.text_channels
+                    if c.permissions_for(guild.me).read_message_history and c.id not in ignored
+                ]
                 if text_channels:
                     target_channel = text_channels[0]
             if not target_channel:
@@ -356,7 +370,7 @@ class Chat(commands.Cog):
         self.recent_timestamps[channel_id].append(time.time())
 
         should_respond = False
-        is_mentioned = self.bot.user.mentioned_in(message)
+        is_mentioned = self.bot.user in message.mentions
         is_reply_to_bot = (message.reference and message.reference.resolved and
                            message.reference.resolved.author == self.bot.user)
 

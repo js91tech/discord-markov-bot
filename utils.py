@@ -1,10 +1,11 @@
 import aiohttp
 import re
+from urllib.parse import quote
 
 
 async def search_gif(query):
     """Searches Tenor directly for a random GIF without needing an API key."""
-    url = f"https://tenor.com/search/{query}-gifs"
+    url = f"https://tenor.com/search/{quote(str(query))}-gifs"
     try:
         async with aiohttp.ClientSession() as session:
             # We add headers so Tenor thinks it's a normal web browser

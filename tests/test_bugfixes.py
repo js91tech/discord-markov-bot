@@ -6,10 +6,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from config.default_settings import DEFAULTS
+from config.default_settings import DEFAULTS, parse_bool
 from config.settings_manager import SettingsManager
 from llm import _should_fallback, generate_llm_response
-from utils import sanitize_message
+from utils import sanitize_message, search_gif
 
 
 class FakeDB:
@@ -125,6 +125,27 @@ class TestSettingsManager(unittest.TestCase):
         self.assertIn("fallback_llm_model", settings)
         self.assertEqual(settings["fallback_llm_model"], DEFAULTS["fallback_llm_model"])
 
+    def test_normalizes_string_channel_ids(self):
+        db = FakeDB()
+        db.settings[2] = {"ignored_channels": ["111", "222"], "allowed_channels": ["333"]}
+        manager = SettingsManager(db)
+        settings = self.run_async(manager.get_settings(2))
+        self.assertEqual(settings["ignored_channels"], [111, 222])
+        self.assertEqual(settings["allowed_channels"], [333])
+        self.assertIn(111, settings["ignored_channels"])
+
+
+class TestBoolParsing(unittest.TestCase):
+    def test_parse_bool_accepts_one(self):
+        self.assertTrue(parse_bool("1"))
+        self.assertTrue(parse_bool("true"))
+        self.assertTrue(parse_bool("on"))
+
+    def test_parse_bool_rejects_zero(self):
+        self.assertFalse(parse_bool("0"))
+        self.assertFalse(parse_bool("false"))
+        self.assertFalse(parse_bool("off"))
+
 
 class TestChatHelpers(unittest.TestCase):
     @classmethod
@@ -193,6 +214,41 @@ class TestTriggerLogic(unittest.TestCase):
                     should_respond = False
 
         self.assertFalse(should_respond)
+
+
+class TestGifSearch(unittest.TestCase):
+    def test_search_gif_url_encodes_query(self):
+        captured = {}
+
+        class FakeResp:
+            status = 200
+
+            async def text(self):
+                return ""
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                return False
+
+        class FakeSession:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                return False
+
+            def get(self, url, headers=None):
+                captured["url"] = url
+                return FakeResp()
+
+        async def run():
+            with patch("utils.aiohttp.ClientSession", return_value=FakeSession()):
+                await search_gif("hello world")
+
+        asyncio.run(run())
+        self.assertIn("hello%20world", captured["url"])
 
 
 if __name__ == "__main__":
