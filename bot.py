@@ -48,7 +48,7 @@ intents.members = True
 # --- BOT CLASS ---
 
 
-class MarkovLLMBot(commands.Bot):
+class DiscordLLMBot(commands.Bot):
     def __init__(self):
         super().__init__(
             command_prefix="/",
@@ -82,7 +82,7 @@ class MarkovLLMBot(commands.Bot):
 # --- INITIALIZE AND RUN ---
 
 
-bot = MarkovLLMBot()
+bot = DiscordLLMBot()
 api_module.bot_instance = bot  # FIX: update the actual module-level variable
 
 print("Starting API dashboard thread...")

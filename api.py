@@ -1,40 +1,43 @@
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, List
 import uvicorn
 import os
 import asyncio
 
-# This will hold the reference to your bot instance and its event loop
 bot_instance = None
 bot_loop = None
 
 app = FastAPI(
     title="Discord Bot Dashboard",
     description="Internal dashboard to manage bot settings",
-    docs_url="/dashboard",  # This makes the UI available at yoururl.com/dashboard
+    docs_url="/dashboard",
     redoc_url=None
 )
 
-# --- Pydantic Models (Defines what data the dashboard expects) ---
-
 
 class SettingsUpdate(BaseModel):
-    brain_mode: Optional[str] = None
     response_enabled: Optional[bool] = None
-    learning_enabled: Optional[bool] = None
     cooldown_seconds: Optional[int] = None
+    ignored_channels: Optional[List[int]] = None
+    allowed_channels: Optional[List[int]] = None
+    ignored_users: Optional[List[int]] = None
     trigger_on_mention: Optional[bool] = None
     trigger_on_reply: Optional[bool] = None
+    conversation_window_seconds: Optional[int] = None
+    indirect_reply_chance: Optional[float] = None
+    reaction_chance: Optional[float] = None
+    random_reply_chance: Optional[float] = None
+    random_mention_chance: Optional[float] = None
+    gif_chance: Optional[float] = None
     personality_prefix: Optional[str] = None
-    # Add any other settings you want to change here!
-
-# --- API Routes ---
+    llm_model: Optional[str] = None
+    fallback_llm_model: Optional[str] = None
+    response_chance: Optional[float] = None
 
 
 @app.get("/api/settings/{guild_id}")
 async def get_guild_settings(guild_id: int):
-    """Fetch the current settings for a specific server"""
     if not bot_instance or not bot_loop:
         raise HTTPException(status_code=503, detail="Bot not ready")
     settings = await asyncio.wrap_future(
@@ -47,7 +50,6 @@ async def get_guild_settings(guild_id: int):
 
 @app.post("/api/settings/{guild_id}")
 async def update_guild_settings(guild_id: int, updates: SettingsUpdate):
-    """Update settings for a specific server"""
     if not bot_instance or not bot_loop:
         raise HTTPException(status_code=503, detail="Bot not ready")
 
@@ -62,10 +64,7 @@ async def update_guild_settings(guild_id: int, updates: SettingsUpdate):
     )
     return {"status": "success", "updated_fields": list(update_data.keys())}
 
-# --- Server Runner ---
-
 
 def run_api():
-    """Runs the web server in a separate thread"""
-    port = int(os.environ.get("PORT", 10000))  # Render requires you to bind to the PORT env var
+    port = int(os.environ.get("PORT", 10000))
     uvicorn.run(app, host="0.0.0.0", port=port)
