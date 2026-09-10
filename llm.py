@@ -36,8 +36,10 @@ async def generate_llm_response(system_prompt, chat_history, model_name=None):
     data = {
         "model": model_name,
         "messages": messages,
-        "max_tokens": 150,  # Keep it short like a Discord message
-        "temperature": 0.9  # A little creative
+        "max_tokens": 150,
+        "temperature": 0.85,
+        "frequency_penalty": 0.6,
+        "presence_penalty": 0.4,
     }
 
     try:
