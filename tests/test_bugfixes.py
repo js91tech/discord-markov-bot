@@ -10,6 +10,8 @@ from config.default_settings import DEFAULTS, parse_bool
 from config.settings_manager import SettingsManager
 from llm import _should_fallback, generate_llm_response
 from utils import sanitize_message, search_gif
+from cogs.settings_cog import build_roast_prompt
+from cogs.chat import DEFAULT_PERSONALITY
 
 
 class FakeDB:
@@ -109,6 +111,53 @@ class TestLLMFallback(unittest.TestCase):
         system_messages = [m for m in captured[0] if m["role"] == "system"]
         self.assertEqual(len(system_messages), 1)
         self.assertEqual(system_messages[0]["content"], "personality prompt")
+
+    def test_fallback_strips_images(self):
+        captured = []
+
+        async def fake_request(model_name, messages):
+            captured.append((model_name, messages))
+            if model_name == "primary-model":
+                return None, 404, "vision not available"
+            return "saw the pic", 200, ""
+
+        history = [{
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "Alice: check this out"},
+                {"type": "image_url", "image_url": {"url": "https://example.com/pic.png"}},
+            ],
+        }]
+
+        with patch("llm.OPENROUTER_API_KEY", "test-key"):
+            with patch("llm._request_completion", side_effect=fake_request):
+                result = self.run_async(generate_llm_response(
+                    "system",
+                    history,
+                    model_name="primary-model",
+                    fallback_model="free-model",
+                ))
+
+        self.assertEqual(result, "saw the pic")
+        fallback_messages = captured[1][1]
+        user_content = fallback_messages[1]["content"]
+        self.assertIsInstance(user_content, str)
+        self.assertIn("Alice: check this out", user_content)
+        self.assertIn("[image]", user_content)
+        self.assertNotIn("image_url", str(user_content))
+
+
+class TestRoastPersonality(unittest.TestCase):
+    def test_roast_uses_custom_personality(self):
+        prompt = build_roast_prompt({"personality_prefix": "You are a pirate."}, "Alice")
+        self.assertIn("You are a pirate.", prompt)
+        self.assertIn("Alice", prompt)
+        self.assertNotIn("insufferably sarcastic", prompt)
+
+    def test_roast_uses_default_when_personality_empty(self):
+        prompt = build_roast_prompt({"personality_prefix": "  "}, "Bob")
+        self.assertIn(DEFAULT_PERSONALITY[:40], prompt)
+        self.assertIn("Bob", prompt)
 
 
 class TestSettingsManager(unittest.TestCase):

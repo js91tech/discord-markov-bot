@@ -17,6 +17,36 @@ def _should_fallback(status, error_text):
     return any(keyword in lowered for keyword in _BILLING_KEYWORDS)
 
 
+def _has_images(messages):
+    for msg in messages:
+        content = msg.get("content")
+        if isinstance(content, list):
+            for part in content:
+                if isinstance(part, dict) and part.get("type") == "image_url":
+                    return True
+    return False
+
+
+def _strip_images(messages):
+    """Convert multimodal content to plain text for text-only fallback models."""
+    stripped = []
+    for msg in messages:
+        content = msg.get("content")
+        if not isinstance(content, list):
+            stripped.append(msg)
+            continue
+        texts = []
+        for part in content:
+            if not isinstance(part, dict):
+                continue
+            if part.get("type") == "text":
+                texts.append(part.get("text", ""))
+            elif part.get("type") == "image_url":
+                texts.append("[image]")
+        stripped.append({**msg, "content": " ".join(t for t in texts if t).strip() or "[image]"})
+    return stripped
+
+
 async def _request_completion(model_name, messages):
     url = "https://openrouter.ai/api/v1/chat/completions"
     headers = {
@@ -79,5 +109,6 @@ async def generate_llm_response(system_prompt, chat_history, model_name=None,
         return None
 
     print(f"Falling back from {model_name} to {fallback_model} (status {status})")
-    content, _, _ = await _request_completion(fallback_model, messages)
+    fallback_messages = _strip_images(messages) if _has_images(messages) else messages
+    content, _, _ = await _request_completion(fallback_model, fallback_messages)
     return content
